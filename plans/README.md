@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Plan 05 umgesetzt, wartet auf Review
+Status: Plan 05 reviewed/abgenommen
 
 ## Ziel dieser Planmappe
 
@@ -61,14 +61,14 @@ secrets/
 | 02 | Browser-WebSocket und Sitzungssteuerung | Reviewed/abgenommen | Plan 01 | Pflicht |
 | 03 | SSH-Bridge und Terminaldatenpfad | Reviewed/abgenommen | Plan 02 | Pflicht |
 | 04 | Hardening, Betrieb und Lieferfaehigkeit | Reviewed/abgenommen | Plan 03 | Pflicht |
-| 05 | nfpm-Debian-Paketierung und Installationspfad | Im Review | Plan 04 | Pflicht |
+| 05 | nfpm-Debian-Paketierung und Installationspfad | Reviewed/abgenommen | Plan 04 | Pflicht |
 
 ## Fortschrittspflege
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* Aktuell ist kein weiterer Plan in Arbeit; Plan 05 wurde umgesetzt und haengt im Review.
-* Im Review haengt `plans/05-nfpm-debian-paketierung-und-installationspfad.md`.
+* Aktuell ist kein weiterer Plan in Arbeit; Plan 05 ist reviewed/abgenommen.
+* Die aktuelle Planserie fuer den Gateway ist damit vorerst fachlich abgeschlossen.
 * Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
   * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
   * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
@@ -83,4 +83,5 @@ Bei spaeterer Umsetzung hier nachziehen:
   * Plan 05 fuehrt die Debian-Paketierung mit `nfpm` ein, ohne die Laufzeitkonfiguration auf einen festen Installationsmodus zu verengen.
   * Das Debian-Paket installiert den Gateway, aktiviert oder startet den `systemd`-Dienst aber standardmaessig nicht.
   * Der Paketbuild ist so angelegt, dass er auf macOS ohne Debian-Toolchain gebaut und per Archivinspektion geprueft werden kann.
+  * Der Gateway-Track ist nach Review von Plan 05 vorerst abgeschlossen; verbleibende Themen sind Folgearbeiten ausserhalb dieser Planserie.
 * `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

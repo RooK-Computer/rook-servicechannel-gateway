@@ -9,7 +9,7 @@ It is responsible for:
 * preparing the server-side path towards the target console, and
 * eventually bridging browser terminal traffic to the console.
 
-This repository is in the review phase after packaging. Plans 01-05 are implemented, and Plan 05 is currently waiting for review.
+This repository is in the post-implementation phase. Plans 01-05 are implemented, and the current gateway plan series is complete.
 
 ## Current scope
 
@@ -240,4 +240,4 @@ The `spec/` submodule is the contract source for architecture and API expectatio
 
 ## Status and next step
 
-The current action is to finish and review Plan 05 Debian packaging work before any follow-up plan starts.
+The current gateway plan series is complete. Remaining work, if any, should be handled as explicit follow-up tasks rather than as part of the original implementation sequence.

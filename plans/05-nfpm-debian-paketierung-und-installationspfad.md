@@ -1,8 +1,8 @@
 # Plan 05 - nfpm-Debian-Paketierung und Installationspfad
 
-Status: Umgesetzt, wartet auf Review
+Status: Reviewed/abgenommen
 
-Zuletzt aktualisiert: 2026-04-01
+Zuletzt aktualisiert: 2026-04-01 (Review abgeschlossen)
 
 ## Ziel
 
@@ -129,6 +129,9 @@ Stand nach Umsetzung:
 * lokale Validierung:
   * Paketbau und Inhaltspruefung laufen auf dem Mac
   * Installations-/Runtime-Tests auf Debian bleiben explizit Folgearbeit fuer einen Kollegen mit Debian-Entwicklungsumgebung
+* Review-Ergebnis:
+  * ein echter Punkt im `preremove`-Skript wurde nachgezogen: ein aktivierter Dienst wird vor dem Entfernen jetzt auch deaktiviert
+  * der Hinweis zur Lesbarkeit von `gateway.env` wurde geprueft, aber nicht als Defekt uebernommen, weil `systemd` die `EnvironmentFile` selbst einliest
 
 ## Offene Punkte
 
@@ -141,6 +144,9 @@ Stand nach Umsetzung:
 
 Nach Abschluss dieses Plans:
 
-1. Plan 05 reviewen.
-2. Rueckmeldungen zu Paketlayout, Maintainer-Skripten und Installationsverhalten nachziehen.
-3. Danach wieder anhalten statt stillschweigend den naechsten Plan zu beginnen.
+1. Gateway-Track vorerst als fachlich abgeschlossen betrachten.
+2. Offene Folgearbeiten separat fuehren:
+   * Debian-Installations-/Runtime-Tests
+   * Paket-Signing / Release-Automatisierung
+   * Host-Key-Haertung
+3. Danach keinen weiteren Plan ohne explizite Freigabe beginnen.
