@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Entwurf erstellt, wartet auf Review
+Status: Plan 01 umgesetzt, wartet auf Review
 
 ## Ziel dieser Planmappe
 
@@ -56,7 +56,7 @@ secrets/
 
 | Plan | Thema | Status | Abhaengigkeit | Review-Gate |
 | --- | --- | --- | --- | --- |
-| 01 | Runtime-Grundgeruest und Backend-Validierung | Entwurf | keine | Pflicht |
+| 01 | Runtime-Grundgeruest und Backend-Validierung | Im Review | keine | Pflicht |
 | 02 | Browser-WebSocket und Sitzungssteuerung | Entwurf | Plan 01 | Pflicht |
 | 03 | SSH-Bridge und Terminaldatenpfad | Entwurf | Plan 02 | Pflicht |
 | 04 | Hardening, Betrieb und Lieferfaehigkeit | Entwurf | Plan 03 | Pflicht |
@@ -65,7 +65,11 @@ secrets/
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* welcher Plan gerade in Arbeit ist
-* welcher Plan im Review haengt
-* welche Entscheidungen alle Folgeplaene beeinflussen
-* ob `spec/implementation/05-browser-terminal-gateway-status.md` bereits zum letzten Meilenstein nachgezogen wurde
+* Aktuell ist kein weiterer Plan in Arbeit; Plan 01 wurde umgesetzt und haengt im Review.
+* Im Review haengt `plans/01-runtime-grundgeruest-und-backend-validierung.md`.
+* Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
+  * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
+  * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
+  * Readiness prueft in Plan 01 nur lokale Runtime-/Konfigurationsbereitschaft, nicht die Live-Erreichbarkeit des Backends.
+  * `GET /gateway/terminal` prueft bereits Upgrade-Header und Grant-Header, liefert aber bis Plan 02 bewusst nur `501 Not Implemented`.
+* `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

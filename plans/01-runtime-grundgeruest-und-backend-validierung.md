@@ -1,8 +1,8 @@
 # Plan 01 - Runtime-Grundgeruest und Backend-Validierung
 
-Status: Entwurf fuer Review
+Status: Umgesetzt, wartet auf Review
 
-Zuletzt aktualisiert: initial angelegt
+Zuletzt aktualisiert: 2026-04-01
 
 ## Ziel
 
@@ -85,16 +85,22 @@ Ziel ist Entkopplung, nicht Scheinfunktionalitaet.
 ## Erwartete Dateien oder Bereiche
 
 * `go.mod`
+* `README.md`
 * `cmd/gateway/main.go`
 * `internal/config/...`
 * `internal/httpserver/...`
 * `internal/grants/...`
 * `internal/shutdown/...`
+* `internal/session/...`
+* `internal/websocket/...`
+* `internal/sshbridge/...`
+* `internal/audit/...`
 * erste Tests unter `internal/...` oder `tests/...`
 
 ## Validierung
 
 * `go test ./...`
+* `go build ./...`
 * lokaler Start mit absichtlich unvollstaendiger Konfiguration muss nachvollziehbar fehlschlagen
 * lokaler Start mit gueltiger Basiskonfiguration muss Health-Endpoints bereitstellen
 * Grant-Client muss gegen Mock-Backend positive und negative Faelle pruefen
@@ -111,20 +117,44 @@ Ziel ist Entkopplung, nicht Scheinfunktionalitaet.
 
 Bei Umsetzung dieses Plans laufend nachziehen:
 
-* welche Dateien angelegt wurden
-* welche Konfigurationswerte final benannt wurden
-* welche Fehlercodes oder HTTP-Status vom Backend tatsaechlich beobachtet wurden
+* Angelegte Dateien/Bereiche:
+  * `go.mod`
+  * `README.md`
+  * `cmd/gateway/main.go`
+  * `internal/config/config.go`, `internal/config/config_test.go`
+  * `internal/httpserver/server.go`, `internal/httpserver/server_test.go`
+  * `internal/grants/client.go`, `internal/grants/client_test.go`
+  * `internal/shutdown/shutdown.go`
+  * `internal/session/interfaces.go`
+  * `internal/websocket/interfaces.go`
+  * `internal/sshbridge/interfaces.go`
+  * `internal/audit/interfaces.go`
+* Final benannte Konfigurationswerte:
+  * `GATEWAY_CONFIG_FILE`
+  * `GATEWAY_LISTEN_ADDRESS`
+  * `GATEWAY_BACKEND_BASE_URL`
+  * `GATEWAY_BACKEND_TIMEOUT`
+  * `GATEWAY_GRANT_HEADER_NAME`
+  * `GATEWAY_LOG_LEVEL`
+  * `GATEWAY_SSH_PRIVATE_KEY_PATH`
+  * `GATEWAY_SSH_PUBLIC_KEY_PATH`
+* Beobachtete bzw. gezielt getestete Backend-/Client-Faelle:
+  * `200` mit `ipAddress`
+  * `403` als fachlich ungueltiger Grant
+  * `500` als Backend-Fehler
+  * Transport-/Timeout-Fehler ueber Mock-Server
+  * noch keine Beobachtung gegen ein echtes Backend
 
 ## Offene Punkte
 
-* Ob fuer den HTTP-Teil ausschliesslich die Standardbibliothek reicht oder spaeter doch ein Router gebraucht wird
-* Ob das finale Fehlerformat des Backends noch erweitert wird
-* Wie eng Readiness bereits an externe Abhaengigkeiten gekoppelt werden soll
+* Fuer Plan 01 reicht die Standardbibliothek; offen bleibt nur, ob spaeter mit mehr Routen oder Middleware doch ein Router sinnvoll wird.
+* Das finale Fehlerformat des Backends ist weiter offen; der Client faellt deshalb bei unspezifischen Fehlerantworten auf eine generische Backend-Klassifikation zurueck.
+* Readiness ist in Plan 01 bewusst nur an lokale Runtime- und Konfigurationsbereitschaft gekoppelt, nicht an einen Live-Backend-Check.
 
 ## Naechste Uebergabe
 
 Nach Abschluss dieses Plans:
 
-1. Status in `plans/README.md` und in diesem Dokument aktualisieren.
-2. Falls noetig `spec/implementation/05-browser-terminal-gateway-status.md` verdichtet nachziehen.
-3. Danach stoppen und Review abwarten.
+1. Implementierungsstand im Review pruefen, insbesondere Konfigurationsmodell, Platzhalter-Handshake und Fehlerklassifikation des Grant-Clients.
+2. `plans/README.md` und `spec/implementation/05-browser-terminal-gateway-status.md` sind fuer diesen Meilenstein bereits nachgezogen; bei Review-Erkenntnissen hier erneut synchronisieren.
+3. Nicht eigenstaendig mit Plan 02 weitermachen. Erst nach expliziter menschlicher Freigabe fortsetzen.
