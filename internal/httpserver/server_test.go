@@ -339,8 +339,9 @@ func TestClassifyGrantErrorTransport(t *testing.T) {
 func testConfig() config.Config {
 	return config.Config{
 		HTTP: config.HTTPConfig{
-			ListenAddress:   ":0",
-			GrantHeaderName: "X-Rook-Terminal-Grant",
+			ListenAddress:     ":0",
+			GrantHeaderName:   "X-Rook-Terminal-Grant",
+			ReadHeaderTimeout: 5 * time.Second,
 		},
 		Backend: config.BackendConfig{
 			BaseURL:           "https://backend.example.test",
@@ -356,6 +357,14 @@ func testConfig() config.Config {
 			Port:                  22,
 			ConnectTimeout:        2 * time.Second,
 			InsecureIgnoreHostKey: true,
+		},
+		Session: config.SessionConfig{
+			IdleTimeout:        2 * time.Minute,
+			MaxConcurrent:      32,
+			OutboundQueueDepth: 16,
+		},
+		WebSocket: config.WebSocketConfig{
+			MaxMessageBytes: 64 * 1024,
 		},
 	}
 }

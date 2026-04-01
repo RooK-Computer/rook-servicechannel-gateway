@@ -11,6 +11,7 @@ import (
 
 	gws "github.com/gorilla/websocket"
 
+	"rook-servicechannel-gateway/internal/audit"
 	"rook-servicechannel-gateway/internal/config"
 	"rook-servicechannel-gateway/internal/grants"
 	"rook-servicechannel-gateway/internal/session"
@@ -34,9 +35,9 @@ func New(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator
 		logger = slog.Default()
 	}
 
-	sessions := session.NewRegistry(logger)
+	sessions := newSessionRegistry(cfg, logger)
 	handler := NewHandler(cfg, logger, grantValidator, bridge, sessions)
-	return &Server{logger: logger, sessions: sessions, httpServer: &http.Server{Addr: cfg.HTTP.ListenAddress, Handler: handler, ReadHeaderTimeout: 5 * time.Second}}
+	return &Server{logger: logger, sessions: sessions, httpServer: &http.Server{Addr: cfg.HTTP.ListenAddress, Handler: handler, ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout}}
 }
 
 func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator, bridge sshbridge.Bridge, sessions *session.Registry) http.Handler {
@@ -44,10 +45,12 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 		logger = slog.Default()
 	}
 	if sessions == nil {
-		sessions = session.NewRegistry(logger)
+		sessions = newSessionRegistry(cfg, logger)
 	}
 
-	upgrader := gatewayws.NewUpgrader()
+	upgrader := gatewayws.NewUpgrader(gatewayws.UpgraderConfig{
+		MaxMessageBytes: cfg.WebSocket.MaxMessageBytes,
+	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -97,6 +100,15 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 		}
 		handle, err := sessions.Start(context.Background(), session.StartRequest{Grant: validationResult, Browser: browserConn, Bridge: bridge, SSHAccount: cfg.SSH.Username, Logger: logger})
 		if err != nil {
+			if errors.Is(err, session.ErrSessionLimitReached) {
+				_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerError("session_limit_reached", "gateway session capacity exhausted"))
+				_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerClose(string(session.EndReasonSessionLimit)))
+				_ = browserConn.Close(gws.CloseTryAgainLater, string(session.EndReasonSessionLimit))
+				if logger != nil {
+					logger.Warn("session start rejected", "reason", session.EndReasonSessionLimit, "ipAddress", validationResult.IPAddress)
+				}
+				return
+			}
 			_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerError("ssh_bridge_failed", err.Error()))
 			_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerClose("session_start_failed"))
 			_ = browserConn.Close(gws.CloseInternalServerErr, "session start failed")
@@ -110,6 +122,15 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 		}
 	})
 	return mux
+}
+
+func newSessionRegistry(cfg config.Config, logger *slog.Logger) *session.Registry {
+	return session.NewRegistry(logger, session.RegistryConfig{
+		IdleTimeout:        cfg.Session.IdleTimeout,
+		MaxConcurrent:      cfg.Session.MaxConcurrent,
+		OutboundQueueDepth: cfg.Session.OutboundQueueDepth,
+		AuditSink:          audit.NewLoggerSink(logger),
+	})
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {

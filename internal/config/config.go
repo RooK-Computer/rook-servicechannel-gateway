@@ -15,6 +15,7 @@ import (
 const (
 	envConfigFile               = "GATEWAY_CONFIG_FILE"
 	envListenAddress            = "GATEWAY_LISTEN_ADDRESS"
+	envHTTPReadHeaderTimeout    = "GATEWAY_HTTP_READ_HEADER_TIMEOUT"
 	envBackendBaseURL           = "GATEWAY_BACKEND_BASE_URL"
 	envBackendTimeout           = "GATEWAY_BACKEND_TIMEOUT"
 	envGrantHeaderName          = "GATEWAY_GRANT_HEADER_NAME"
@@ -25,9 +26,14 @@ const (
 	envSSHPort                  = "GATEWAY_SSH_PORT"
 	envSSHConnectTimeout        = "GATEWAY_SSH_CONNECT_TIMEOUT"
 	envSSHInsecureIgnoreHostKey = "GATEWAY_SSH_INSECURE_IGNORE_HOST_KEY"
+	envSessionIdleTimeout       = "GATEWAY_SESSION_IDLE_TIMEOUT"
+	envSessionMaxConcurrent     = "GATEWAY_SESSION_MAX_CONCURRENT"
+	envSessionOutboundQueue     = "GATEWAY_SESSION_OUTBOUND_QUEUE_DEPTH"
+	envWebSocketMaxMessageBytes = "GATEWAY_WEBSOCKET_MAX_MESSAGE_BYTES"
 )
 
 const (
+	defaultHTTPReadHeaderTimeout    = 5 * time.Second
 	defaultBackendTimeout           = 5 * time.Second
 	defaultGrantHeaderName          = "X-Rook-Terminal-Grant"
 	defaultLogLevel                 = slog.LevelInfo
@@ -37,19 +43,26 @@ const (
 	defaultSSHPort                  = 22
 	defaultSSHConnectTimeout        = 5 * time.Second
 	defaultSSHInsecureIgnoreHostKey = true
+	defaultSessionIdleTimeout       = 2 * time.Minute
+	defaultSessionMaxConcurrent     = 32
+	defaultSessionOutboundQueue     = 16
+	defaultWebSocketMaxMessageBytes = int64(64 * 1024)
 )
 
 type Config struct {
-	HTTP    HTTPConfig
-	Backend BackendConfig
-	Logging LoggingConfig
-	Secrets SecretsConfig
-	SSH     SSHConfig
+	HTTP      HTTPConfig
+	Backend   BackendConfig
+	Logging   LoggingConfig
+	Secrets   SecretsConfig
+	SSH       SSHConfig
+	Session   SessionConfig
+	WebSocket WebSocketConfig
 }
 
 type HTTPConfig struct {
-	ListenAddress   string
-	GrantHeaderName string
+	ListenAddress     string
+	GrantHeaderName   string
+	ReadHeaderTimeout time.Duration
 }
 
 type BackendConfig struct {
@@ -73,6 +86,16 @@ type SSHConfig struct {
 	InsecureIgnoreHostKey bool
 }
 
+type SessionConfig struct {
+	IdleTimeout        time.Duration
+	MaxConcurrent      int
+	OutboundQueueDepth int
+}
+
+type WebSocketConfig struct {
+	MaxMessageBytes int64
+}
+
 func Load() (Config, error) {
 	vars, err := loadVars(os.LookupEnv)
 	if err != nil {
@@ -85,8 +108,9 @@ func Load() (Config, error) {
 func Resolve(vars map[string]string) (Config, error) {
 	cfg := Config{
 		HTTP: HTTPConfig{
-			ListenAddress:   strings.TrimSpace(vars[envListenAddress]),
-			GrantHeaderName: firstNonEmpty(vars[envGrantHeaderName], defaultGrantHeaderName),
+			ListenAddress:     strings.TrimSpace(vars[envListenAddress]),
+			GrantHeaderName:   firstNonEmpty(vars[envGrantHeaderName], defaultGrantHeaderName),
+			ReadHeaderTimeout: defaultHTTPReadHeaderTimeout,
 		},
 		Backend: BackendConfig{
 			BaseURL: strings.TrimSpace(vars[envBackendBaseURL]),
@@ -102,6 +126,14 @@ func Resolve(vars map[string]string) (Config, error) {
 			ConnectTimeout:        defaultSSHConnectTimeout,
 			InsecureIgnoreHostKey: defaultSSHInsecureIgnoreHostKey,
 		},
+		Session: SessionConfig{
+			IdleTimeout:        defaultSessionIdleTimeout,
+			MaxConcurrent:      defaultSessionMaxConcurrent,
+			OutboundQueueDepth: defaultSessionOutboundQueue,
+		},
+		WebSocket: WebSocketConfig{
+			MaxMessageBytes: defaultWebSocketMaxMessageBytes,
+		},
 	}
 
 	timeoutValue := firstNonEmpty(vars[envBackendTimeout], defaultBackendTimeout.String())
@@ -110,6 +142,14 @@ func Resolve(vars map[string]string) (Config, error) {
 		return Config{}, fmt.Errorf("parse %s: %w", envBackendTimeout, err)
 	}
 	cfg.Backend.ValidationTimeout = timeout
+
+	if readHeaderTimeoutValue := strings.TrimSpace(vars[envHTTPReadHeaderTimeout]); readHeaderTimeoutValue != "" {
+		parsedTimeout, err := time.ParseDuration(readHeaderTimeoutValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envHTTPReadHeaderTimeout, err)
+		}
+		cfg.HTTP.ReadHeaderTimeout = parsedTimeout
+	}
 
 	if portValue := strings.TrimSpace(vars[envSSHPort]); portValue != "" {
 		port, err := strconv.Atoi(portValue)
@@ -133,6 +173,38 @@ func Resolve(vars map[string]string) (Config, error) {
 			return Config{}, fmt.Errorf("parse %s: %w", envSSHInsecureIgnoreHostKey, err)
 		}
 		cfg.SSH.InsecureIgnoreHostKey = parsedBool
+	}
+
+	if idleTimeoutValue := strings.TrimSpace(vars[envSessionIdleTimeout]); idleTimeoutValue != "" {
+		parsedTimeout, err := time.ParseDuration(idleTimeoutValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envSessionIdleTimeout, err)
+		}
+		cfg.Session.IdleTimeout = parsedTimeout
+	}
+
+	if maxConcurrentValue := strings.TrimSpace(vars[envSessionMaxConcurrent]); maxConcurrentValue != "" {
+		parsedValue, err := strconv.Atoi(maxConcurrentValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envSessionMaxConcurrent, err)
+		}
+		cfg.Session.MaxConcurrent = parsedValue
+	}
+
+	if outboundQueueValue := strings.TrimSpace(vars[envSessionOutboundQueue]); outboundQueueValue != "" {
+		parsedValue, err := strconv.Atoi(outboundQueueValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envSessionOutboundQueue, err)
+		}
+		cfg.Session.OutboundQueueDepth = parsedValue
+	}
+
+	if maxMessageBytesValue := strings.TrimSpace(vars[envWebSocketMaxMessageBytes]); maxMessageBytesValue != "" {
+		parsedValue, err := strconv.ParseInt(maxMessageBytesValue, 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envWebSocketMaxMessageBytes, err)
+		}
+		cfg.WebSocket.MaxMessageBytes = parsedValue
 	}
 
 	if levelValue := strings.TrimSpace(vars[envLogLevel]); levelValue != "" {
@@ -174,6 +246,9 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.HTTP.GrantHeaderName) == "" {
 		return fmt.Errorf("%s must not be empty", envGrantHeaderName)
 	}
+	if c.HTTP.ReadHeaderTimeout <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envHTTPReadHeaderTimeout)
+	}
 	if strings.TrimSpace(c.Secrets.SSHPrivateKeyPath) == "" {
 		return fmt.Errorf("%s must not be empty", envSSHPrivateKeyPath)
 	}
@@ -188,6 +263,18 @@ func (c Config) Validate() error {
 	}
 	if c.SSH.ConnectTimeout <= 0 {
 		return fmt.Errorf("%s must be greater than zero", envSSHConnectTimeout)
+	}
+	if c.Session.IdleTimeout <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envSessionIdleTimeout)
+	}
+	if c.Session.MaxConcurrent <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envSessionMaxConcurrent)
+	}
+	if c.Session.OutboundQueueDepth <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envSessionOutboundQueue)
+	}
+	if c.WebSocket.MaxMessageBytes <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envWebSocketMaxMessageBytes)
 	}
 	return nil
 }
@@ -224,6 +311,7 @@ func loadVars(lookup func(string) (string, bool)) (map[string]string, error) {
 	for _, key := range []string{
 		envConfigFile,
 		envListenAddress,
+		envHTTPReadHeaderTimeout,
 		envBackendBaseURL,
 		envBackendTimeout,
 		envGrantHeaderName,
@@ -234,6 +322,10 @@ func loadVars(lookup func(string) (string, bool)) (map[string]string, error) {
 		envSSHPort,
 		envSSHConnectTimeout,
 		envSSHInsecureIgnoreHostKey,
+		envSessionIdleTimeout,
+		envSessionMaxConcurrent,
+		envSessionOutboundQueue,
+		envWebSocketMaxMessageBytes,
 	} {
 		if value, ok := lookup(key); ok {
 			vars[key] = value

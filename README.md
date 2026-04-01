@@ -9,7 +9,7 @@ It is responsible for:
 * preparing the server-side path towards the target console, and
 * eventually bridging browser terminal traffic to the console.
 
-This repository is still in an early implementation phase. Plan 03 (SSH bridge and terminal data path) is implemented and waiting for review. Hardening and delivery work remain for the next step.
+This repository is in the review phase after hardening. Plans 01-04 are implemented, and Plan 04 is currently waiting for review.
 
 ## Current scope
 
@@ -56,6 +56,7 @@ Key directories at this stage:
 The service currently expects at least:
 
 * `GATEWAY_LISTEN_ADDRESS`
+* `GATEWAY_HTTP_READ_HEADER_TIMEOUT`
 * `GATEWAY_BACKEND_BASE_URL`
 
 Optional settings with defaults:
@@ -69,6 +70,10 @@ Optional settings with defaults:
 * `GATEWAY_SSH_PORT` (default: `22`)
 * `GATEWAY_SSH_CONNECT_TIMEOUT` (default: `5s`)
 * `GATEWAY_SSH_INSECURE_IGNORE_HOST_KEY` (default: `true` for the current MVP)
+* `GATEWAY_SESSION_IDLE_TIMEOUT` (default: `2m`)
+* `GATEWAY_SESSION_MAX_CONCURRENT` (default: `32`)
+* `GATEWAY_SESSION_OUTBOUND_QUEUE_DEPTH` (default: `16`)
+* `GATEWAY_WEBSOCKET_MAX_MESSAGE_BYTES` (default: `65536`)
 
 For local development you can also point `GATEWAY_CONFIG_FILE` to a simple `KEY=VALUE` file. Environment variables override values from that file.
 
@@ -80,10 +85,22 @@ Run tests:
 make test
 ```
 
+Run the dedicated end-to-end suite:
+
+```bash
+make test-e2e
+```
+
 Build all packages:
 
 ```bash
 make build
+```
+
+Run the full verification path:
+
+```bash
+make verify
 ```
 
 Run the gateway locally:
@@ -105,6 +122,73 @@ At this stage `GET /gateway/terminal` performs a real WebSocket upgrade after va
 
 For the current MVP, host-key verification is intentionally bypassed because the console host keys are not yet distributable in a verifiable way. This is a known hardening gap that must be revisited in the next plan.
 
+The gateway now also enforces basic operating limits:
+
+* HTTP header read timeout
+* session inactivity timeout
+* maximum concurrent gateway sessions
+* bounded outbound queue depth per session
+* maximum WebSocket message size
+
+## Local end-to-end verification
+
+The repository now contains a reproducible local end-to-end suite in `tests/e2e/`.
+
+It uses:
+
+* a mock backend HTTP server for terminal-grant validation,
+* a local in-process SSH test server, and
+* a WebSocket client as the browser stand-in.
+
+Covered paths currently include:
+
+* successful browser -> gateway -> SSH echo flow,
+* backend unavailable during handshake,
+* SSH connection failure after a valid grant, and
+* idle-session timeout handling.
+
+Run it with:
+
+```bash
+make test-e2e
+```
+
+## Operations and deployment
+
+The repository now includes a first `systemd` delivery path:
+
+* unit file: `deploy/systemd/rook-servicechannel-gateway.service`
+* example environment file: `deploy/systemd/gateway.env.example`
+
+The example environment file intentionally contains no secrets. For real deployment, move the private/public SSH key pair into an external secret store or secret mount and point:
+
+* `GATEWAY_SSH_PRIVATE_KEY_PATH`
+* `GATEWAY_SSH_PUBLIC_KEY_PATH`
+
+to the mounted file paths.
+
+### Minimal runbook
+
+Build and verify before rollout:
+
+```bash
+make verify
+```
+
+Basic runtime checks after start:
+
+```bash
+curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/readyz
+```
+
+Typical failure indicators:
+
+* `backend_unreachable` means grant validation could not reach the backend.
+* `ssh_bridge_failed` means the grant was valid but the server-side SSH session could not be opened.
+* `idle_timeout` means the browser session stayed inactive longer than the configured session timeout.
+* `session_limit_reached` means the configured maximum number of concurrent sessions is exhausted.
+
 ## Planning and specifications
 
 This repository follows a sequential implementation flow with mandatory review gates.
@@ -124,4 +208,4 @@ The `spec/` submodule is the contract source for architecture and API expectatio
 
 ## Status and next step
 
-The next action is to review the completed Plan 03 implementation. Plan 04 (hardening, operations, and delivery) should only start after explicit approval.
+The current action is to review the completed Plan 04 hardening work before any follow-up plan starts.

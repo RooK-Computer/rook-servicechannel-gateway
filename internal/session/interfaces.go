@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"rook-servicechannel-gateway/internal/audit"
 	"rook-servicechannel-gateway/internal/grants"
 	"rook-servicechannel-gateway/internal/sshbridge"
 	gatewayws "rook-servicechannel-gateway/internal/websocket"
@@ -25,6 +26,13 @@ type StartRequest struct {
 }
 
 type CleanupHook func(context.Context, Snapshot)
+
+type RegistryConfig struct {
+	IdleTimeout        time.Duration
+	MaxConcurrent      int
+	OutboundQueueDepth int
+	AuditSink          audit.Sink
+}
 
 type Handle interface {
 	ID() string
@@ -47,6 +55,8 @@ const (
 	EndReasonInternalError     EndReason = "internal_error"
 	EndReasonConsoleClosed     EndReason = "console_closed"
 	EndReasonSSHError          EndReason = "ssh_error"
+	EndReasonIdleTimeout       EndReason = "idle_timeout"
+	EndReasonSessionLimit      EndReason = "session_limit_reached"
 )
 
 type Snapshot struct {

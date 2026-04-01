@@ -10,19 +10,35 @@ import (
 	gws "github.com/gorilla/websocket"
 )
 
-const writeTimeout = 5 * time.Second
+const defaultWriteTimeout = 5 * time.Second
+
+type UpgraderConfig struct {
+	MaxMessageBytes int64
+	WriteTimeout    time.Duration
+}
 
 type Upgrader struct {
-	upgrader gws.Upgrader
+	upgrader        gws.Upgrader
+	maxMessageBytes int64
+	writeTimeout    time.Duration
 }
 
 type GorillaConn struct {
-	conn    *gws.Conn
-	writeMu sync.Mutex
+	conn         *gws.Conn
+	writeMu      sync.Mutex
+	writeTimeout time.Duration
 }
 
-func NewUpgrader() Upgrader {
+func NewUpgrader(cfg UpgraderConfig) Upgrader {
+	if cfg.MaxMessageBytes <= 0 {
+		cfg.MaxMessageBytes = 64 * 1024
+	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = defaultWriteTimeout
+	}
 	return Upgrader{
+		maxMessageBytes: cfg.MaxMessageBytes,
+		writeTimeout:    cfg.WriteTimeout,
 		upgrader: gws.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -35,8 +51,9 @@ func (u Upgrader) Upgrade(w http.ResponseWriter, r *http.Request, responseHeader
 	if err != nil {
 		return nil, err
 	}
+	conn.SetReadLimit(u.maxMessageBytes)
 
-	return &GorillaConn{conn: conn}, nil
+	return &GorillaConn{conn: conn, writeTimeout: u.writeTimeout}, nil
 }
 
 func (c *GorillaConn) ReadMessage(ctx context.Context) (Message, error) {
@@ -65,7 +82,7 @@ func (c *GorillaConn) WriteMessage(ctx context.Context, message Message) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
-	writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	writeCtx, cancel := context.WithTimeout(ctx, c.writeTimeout)
 	defer cancel()
 
 	deadline, ok := writeCtx.Deadline()
@@ -74,7 +91,7 @@ func (c *GorillaConn) WriteMessage(ctx context.Context, message Message) error {
 			return err
 		}
 	} else {
-		if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 			return err
 		}
 	}
@@ -87,7 +104,7 @@ func (c *GorillaConn) Close(code int, reason string) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
-	deadline := time.Now().Add(writeTimeout)
+	deadline := time.Now().Add(c.writeTimeout)
 	if err := c.conn.WriteControl(gws.CloseMessage, gws.FormatCloseMessage(code, reason), deadline); err != nil {
 		if !errors.Is(err, gws.ErrCloseSent) {
 			_ = c.conn.Close()

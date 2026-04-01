@@ -22,6 +22,7 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 
 	cfg, err := Resolve(map[string]string{
 		envListenAddress:            ":8080",
+		envHTTPReadHeaderTimeout:    "6s",
 		envBackendBaseURL:           "https://backend.example.test",
 		envBackendTimeout:           "7s",
 		envLogLevel:                 "debug",
@@ -30,12 +31,16 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 		envSSHConnectTimeout:        "9s",
 		envSSHUsername:              "alice",
 		envSSHInsecureIgnoreHostKey: "true",
+		envSessionIdleTimeout:       "45s",
+		envSessionMaxConcurrent:     "5",
+		envSessionOutboundQueue:     "24",
+		envWebSocketMaxMessageBytes: "131072",
 	})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	if cfg.HTTP.ListenAddress != ":8080" || cfg.Backend.ValidationTimeout != 7*time.Second || cfg.Logging.Level != slog.LevelDebug {
+	if cfg.HTTP.ListenAddress != ":8080" || cfg.HTTP.ReadHeaderTimeout != 6*time.Second || cfg.Backend.ValidationTimeout != 7*time.Second || cfg.Logging.Level != slog.LevelDebug {
 		t.Fatalf("unexpected config %#v", cfg)
 	}
 	if cfg.HTTP.GrantHeaderName != "X-Test-Grant" || cfg.Secrets.SSHPrivateKeyPath != defaultSSHPrivateKey {
@@ -43,6 +48,12 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 	}
 	if cfg.SSH.Port != 2022 || cfg.SSH.ConnectTimeout != 9*time.Second || cfg.SSH.Username != "alice" || !cfg.SSH.InsecureIgnoreHostKey {
 		t.Fatalf("unexpected ssh config %#v", cfg.SSH)
+	}
+	if cfg.Session.IdleTimeout != 45*time.Second || cfg.Session.MaxConcurrent != 5 || cfg.Session.OutboundQueueDepth != 24 {
+		t.Fatalf("unexpected session config %#v", cfg.Session)
+	}
+	if cfg.WebSocket.MaxMessageBytes != 131072 {
+		t.Fatalf("unexpected websocket config %#v", cfg.WebSocket)
 	}
 }
 
@@ -77,5 +88,18 @@ func TestLoadMergesConfigFileAndEnvironment(t *testing.T) {
 
 	if cfg.HTTP.ListenAddress != ":7000" || cfg.Backend.BaseURL != "https://env.example.test" || cfg.Backend.ValidationTimeout != 3*time.Second || cfg.SSH.Port != 2222 {
 		t.Fatalf("unexpected config %#v", cfg)
+	}
+}
+
+func TestResolveRejectsInvalidSessionLimit(t *testing.T) {
+	t.Parallel()
+
+	_, err := Resolve(map[string]string{
+		envListenAddress:        ":8080",
+		envBackendBaseURL:       "https://backend.example.test",
+		envSessionMaxConcurrent: "0",
+	})
+	if err == nil || err.Error() != envSessionMaxConcurrent+" must be greater than zero" {
+		t.Fatalf("expected session max concurrent validation error, got %v", err)
 	}
 }

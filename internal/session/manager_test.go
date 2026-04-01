@@ -2,12 +2,15 @@ package session
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
+	"rook-servicechannel-gateway/internal/audit"
 	"rook-servicechannel-gateway/internal/grants"
 	"rook-servicechannel-gateway/internal/sshbridge"
 	gatewayws "rook-servicechannel-gateway/internal/websocket"
@@ -47,6 +50,17 @@ type stubBridge struct {
 	err     error
 }
 
+type auditRecord struct {
+	name    string
+	session string
+	fields  map[string]string
+}
+
+type mockAuditSink struct {
+	mu      sync.Mutex
+	records []auditRecord
+}
+
 func newMockBrowser() *mockBrowser {
 	return &mockBrowser{readCh: make(chan readResult, 32)}
 }
@@ -60,13 +74,13 @@ func (m *mockBrowser) ReadMessage(context.Context) (gatewayws.Message, error) {
 	return result.message, result.err
 }
 
-func (m *mockBrowser) WriteMessage(context.Context, gatewayws.Message) error {
+func (m *mockBrowser) WriteMessage(_ context.Context, message gatewayws.Message) error {
 	if m.writeBlock != nil {
 		<-m.writeBlock
 	}
 	m.writeMu.Lock()
 	defer m.writeMu.Unlock()
-	m.writes = append(m.writes, gatewayws.Message{})
+	m.writes = append(m.writes, message)
 	return nil
 }
 
@@ -133,6 +147,17 @@ func (b stubBridge) Open(context.Context, sshbridge.SessionRequest) (sshbridge.S
 	return b.console, nil
 }
 
+func (s *mockAuditSink) Record(_ context.Context, event audit.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fields := map[string]string{}
+	for key, value := range event.Fields {
+		fields[key] = value
+	}
+	s.records = append(s.records, auditRecord{name: event.Name, session: event.Session, fields: fields})
+	return nil
+}
+
 func TestRegistryRemovesSessionOnClientClose(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +190,12 @@ func TestRegistryRemovesSessionOnClientClose(t *testing.T) {
 	}
 	if registry.Count() != 0 {
 		t.Fatalf("expected registry to be empty, got %d", registry.Count())
+	}
+
+	browser.writeMu.Lock()
+	defer browser.writeMu.Unlock()
+	if browser.closeCode != 1000 {
+		t.Fatalf("expected normal close, got %d", browser.closeCode)
 	}
 }
 
@@ -215,6 +246,12 @@ func TestSessionQueueOverflowClosesSession(t *testing.T) {
 	}
 	if registry.Count() != 0 {
 		t.Fatalf("expected registry to be empty, got %d", registry.Count())
+	}
+
+	browser.writeMu.Lock()
+	defer browser.writeMu.Unlock()
+	if browser.closeReason != "outbound_queue_exhausted" {
+		t.Fatalf("unexpected close reason %q", browser.closeReason)
 	}
 }
 
@@ -338,6 +375,116 @@ func TestConsoleOutputGetsQueuedForBrowser(t *testing.T) {
 	if len(browser.writes) == 0 {
 		t.Fatal("expected browser to receive queued output")
 	}
+}
+
+func TestIdleTimeoutClosesSession(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry(testLogger(), RegistryConfig{IdleTimeout: 80 * time.Millisecond})
+	browser := newMockBrowser()
+	console := newStubConsole()
+
+	_, err := registry.Start(context.Background(), StartRequest{
+		Grant:      grants.ValidationResult{IPAddress: "10.0.0.8"},
+		Browser:    browser,
+		Bridge:     stubBridge{console: console},
+		SSHAccount: "pi",
+		Logger:     testLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		browser.writeMu.Lock()
+		closed := browser.closeCount > 0
+		reason := browser.closeReason
+		browser.writeMu.Unlock()
+		if closed {
+			if reason != string(EndReasonIdleTimeout) {
+				t.Fatalf("unexpected close reason %q", reason)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected idle timeout to close session")
+}
+
+func TestStartRejectsWhenSessionLimitReached(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry(testLogger(), RegistryConfig{MaxConcurrent: 1})
+	firstBrowser := newMockBrowser()
+	firstConsole := newStubConsole()
+
+	_, err := registry.Start(context.Background(), StartRequest{
+		Grant:      grants.ValidationResult{IPAddress: "10.0.0.8"},
+		Browser:    firstBrowser,
+		Bridge:     stubBridge{console: firstConsole},
+		SSHAccount: "pi",
+		Logger:     testLogger(),
+	})
+	if err != nil {
+		t.Fatalf("first Start() error = %v", err)
+	}
+
+	secondBrowser := newMockBrowser()
+	secondConsole := newStubConsole()
+	_, err = registry.Start(context.Background(), StartRequest{
+		Grant:      grants.ValidationResult{IPAddress: "10.0.0.9"},
+		Browser:    secondBrowser,
+		Bridge:     stubBridge{console: secondConsole},
+		SSHAccount: "pi",
+		Logger:     testLogger(),
+	})
+	if err == nil || !errors.Is(err, ErrSessionLimitReached) {
+		t.Fatalf("expected ErrSessionLimitReached, got %v", err)
+	}
+
+	firstBrowser.push(gatewayws.Message{Type: gatewayws.TextFrame, Data: []byte(`{"type":"close"}`)})
+}
+
+func TestSessionAuditIncludesGrantFields(t *testing.T) {
+	t.Parallel()
+
+	sink := &mockAuditSink{}
+	registry := NewRegistry(testLogger(), RegistryConfig{AuditSink: sink})
+	browser := newMockBrowser()
+	console := newStubConsole()
+
+	_, err := registry.Start(context.Background(), StartRequest{
+		Grant: grants.ValidationResult{
+			IPAddress:   "10.0.0.8",
+			RawResponse: json.RawMessage(`{"ipAddress":"10.0.0.8","pin":"1234","mitarbeiteraccount":"alice"}`),
+		},
+		Browser:    browser,
+		Bridge:     stubBridge{console: console},
+		SSHAccount: "pi",
+		Logger:     testLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	browser.push(gatewayws.Message{Type: gatewayws.TextFrame, Data: []byte(`{"type":"close"}`)})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		count := len(sink.records)
+		records := append([]auditRecord(nil), sink.records...)
+		sink.mu.Unlock()
+		if count >= 2 {
+			if records[0].fields["pin"] != "1234" || records[0].fields["mitarbeiteraccount"] != "alice" {
+				t.Fatalf("unexpected audit fields %#v", records[0].fields)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected audit records")
 }
 
 func testLogger() *slog.Logger {

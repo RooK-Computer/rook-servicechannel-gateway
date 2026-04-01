@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Plan 03 umgesetzt, wartet auf Review
+Status: Plan 04 umgesetzt, wartet auf Review
 
 ## Ziel dieser Planmappe
 
@@ -58,22 +58,24 @@ secrets/
 | --- | --- | --- | --- | --- |
 | 01 | Runtime-Grundgeruest und Backend-Validierung | Reviewed/abgenommen | keine | Pflicht |
 | 02 | Browser-WebSocket und Sitzungssteuerung | Reviewed/abgenommen | Plan 01 | Pflicht |
-| 03 | SSH-Bridge und Terminaldatenpfad | Im Review | Plan 02 | Pflicht |
-| 04 | Hardening, Betrieb und Lieferfaehigkeit | Entwurf | Plan 03 | Pflicht |
+| 03 | SSH-Bridge und Terminaldatenpfad | Reviewed/abgenommen | Plan 02 | Pflicht |
+| 04 | Hardening, Betrieb und Lieferfaehigkeit | Im Review | Plan 03 | Pflicht |
 
 ## Fortschrittspflege
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* Aktuell ist kein weiterer Plan in Arbeit; Plan 03 wurde umgesetzt und haengt im Review.
-* Im Review haengt `plans/03-ssh-bridge-und-terminaldatenpfad.md`.
+* Aktuell ist kein weiterer Plan in Arbeit; Plan 04 wurde umgesetzt und haengt im Review.
+* Im Review haengt `plans/04-hardening-betrieb-und-lieferfaehigkeit.md`.
 * Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
   * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
   * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
   * Readiness prueft in Plan 01 nur lokale Runtime-/Konfigurationsbereitschaft, nicht die Live-Erreichbarkeit des Backends.
   * `GET /gateway/terminal` fuehrt jetzt ein echtes WebSocket-Upgrade mit vorgelagerter Header-/Grant-Pruefung aus.
   * Der Header-basierte Handshake ist der alleinige Autorisierungspfad; `authorize`/`authorized` wurden aus dem aktiven Browser-Gateway-Protokoll entfernt und im `spec`-Submodul nachgezogen.
-  * Sitzungen werden zentral verwaltet und haben aktuell eine ausgehende Queue von 16 Nachrichten.
+  * Sitzungen werden zentral verwaltet; Queue-Tiefe, Inaktivitaets-Timeout, Session-Limit und WebSocket-Message-Groesse sind jetzt konfigurierbar.
   * SSH-Bridge und PTY-Datenpfad sind jetzt produktiv angebunden.
   * Host-Key-Verifikation wird fuer den aktuellen MVP bewusst umgangen und muss in Plan 04 gezielt nachgehaertet werden.
+  * Plan 04 setzt fuer Betriebs-Observability auf zaehlbare strukturierte Session- und Audit-Logs statt auf eine eigene Metrik-Schnittstelle.
+  * Plan 04 liefert einen `systemd`-Pfad mit Beispiel-Environment und dokumentiertem lokalen `make verify`-/`make test-e2e`-Freigabepfad.
 * `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

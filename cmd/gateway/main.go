@@ -29,11 +29,16 @@ func run() error {
 	logger := newLogger(cfg.Logging.Level)
 	logger.Info("starting gateway",
 		"listenAddress", cfg.HTTP.ListenAddress,
+		"httpReadHeaderTimeout", cfg.HTTP.ReadHeaderTimeout,
 		"backendBaseURL", cfg.Backend.BaseURL,
 		"grantHeaderName", cfg.HTTP.GrantHeaderName,
 		"sshUsername", cfg.SSH.Username,
 		"sshPort", cfg.SSH.Port,
 		"sshInsecureIgnoreHostKey", cfg.SSH.InsecureIgnoreHostKey,
+		"sessionIdleTimeout", cfg.Session.IdleTimeout,
+		"sessionMaxConcurrent", cfg.Session.MaxConcurrent,
+		"sessionOutboundQueueDepth", cfg.Session.OutboundQueueDepth,
+		"websocketMaxMessageBytes", cfg.WebSocket.MaxMessageBytes,
 	)
 
 	validator := grants.NewClient(cfg.Backend.BaseURL, cfg.Backend.ValidationTimeout)
