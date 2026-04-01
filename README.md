@@ -9,7 +9,7 @@ It is responsible for:
 * preparing the server-side path towards the target console, and
 * eventually bridging browser terminal traffic to the console.
 
-This repository is still in an early implementation phase. Plan 01 (runtime bootstrap and backend grant validation) is implemented and waiting for review. WebSocket session handling, SSH bridging, and hardening work are planned in follow-up steps.
+This repository is still in an early implementation phase. Plan 02 (browser WebSocket handling and session control) is implemented and waiting for review. SSH bridging and hardening work are planned in follow-up steps.
 
 ## Current scope
 
@@ -19,15 +19,15 @@ The current codebase provides:
 * explicit configuration loading via environment variables and an optional local config file,
 * structured startup logging,
 * `/healthz` and `/readyz` HTTP endpoints,
-* a placeholder `GET /gateway/terminal` route that validates WebSocket upgrade prerequisites, and
+* a real `GET /gateway/terminal` WebSocket handshake that validates the terminal grant before upgrading,
+* a central browser session registry with lifecycle tracking and cleanup hooks,
+* a strict control-message parser for `input`, `resize`, `error`, and `close`-related flows, and
 * a backend client for `POST /api/gateway/1/validateToken` with tests for success, invalid-grant, backend-error, and timeout flows.
 
 The following are intentionally not implemented yet:
 
-* the actual WebSocket session lifecycle,
 * SSH connection handling to the console,
-* terminal stream forwarding,
-* reconnect/session management semantics, and
+* terminal stream forwarding to a live console,
 * production hardening and delivery assets.
 
 ## Repository structure
@@ -36,9 +36,11 @@ Key directories at this stage:
 
 * `cmd/gateway/` - service entrypoint
 * `internal/config/` - configuration loading and validation
-* `internal/httpserver/` - HTTP runtime and placeholder browser route
+* `internal/httpserver/` - HTTP runtime and browser WebSocket handshake
 * `internal/grants/` - backend terminal grant validation client
-* `internal/session/`, `internal/websocket/`, `internal/sshbridge/`, `internal/audit/` - follow-up interfaces for later plans
+* `internal/session/` - browser session lifecycle management
+* `internal/websocket/` - WebSocket upgrade, frame handling, and protocol parsing
+* `internal/sshbridge/`, `internal/audit/` - follow-up interfaces for later plans
 * `plans/` - implementation plans and review gates
 * `spec/` - architecture, OpenAPI contracts, and cross-component status documents
 * `secrets/` - local-only sensitive development artifacts, intentionally not committed
@@ -95,7 +97,7 @@ curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8080/readyz
 ```
 
-At this stage `GET /gateway/terminal` is only a guarded placeholder. It verifies the WebSocket upgrade headers and the configured terminal-grant header, then returns a `501 Not Implemented` response until the next plan is implemented.
+At this stage `GET /gateway/terminal` performs a real WebSocket upgrade after validating the configured terminal-grant header against the backend. Authorization happens entirely in the handshake header; the active runtime protocol does not use `authorize` or `authorized` messages anymore.
 
 ## Planning and specifications
 
@@ -116,4 +118,4 @@ The `spec/` submodule is the contract source for architecture and API expectatio
 
 ## Status and next step
 
-The next action is to review the completed Plan 01 implementation. Plan 02 (browser WebSocket handling and session control) should only start after explicit approval.
+The next action is to review the completed Plan 02 implementation. Plan 03 (SSH bridge and terminal data path) should only start after explicit approval.

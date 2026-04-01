@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Plan 01 umgesetzt, wartet auf Review
+Status: Plan 02 umgesetzt, wartet auf Review
 
 ## Ziel dieser Planmappe
 
@@ -56,8 +56,8 @@ secrets/
 
 | Plan | Thema | Status | Abhaengigkeit | Review-Gate |
 | --- | --- | --- | --- | --- |
-| 01 | Runtime-Grundgeruest und Backend-Validierung | Im Review | keine | Pflicht |
-| 02 | Browser-WebSocket und Sitzungssteuerung | Entwurf | Plan 01 | Pflicht |
+| 01 | Runtime-Grundgeruest und Backend-Validierung | Reviewed/abgenommen | keine | Pflicht |
+| 02 | Browser-WebSocket und Sitzungssteuerung | Im Review | Plan 01 | Pflicht |
 | 03 | SSH-Bridge und Terminaldatenpfad | Entwurf | Plan 02 | Pflicht |
 | 04 | Hardening, Betrieb und Lieferfaehigkeit | Entwurf | Plan 03 | Pflicht |
 
@@ -65,11 +65,13 @@ secrets/
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* Aktuell ist kein weiterer Plan in Arbeit; Plan 01 wurde umgesetzt und haengt im Review.
-* Im Review haengt `plans/01-runtime-grundgeruest-und-backend-validierung.md`.
+* Aktuell ist kein weiterer Plan in Arbeit; Plan 02 wurde umgesetzt und haengt im Review.
+* Im Review haengt `plans/02-browser-websocket-und-sitzungssteuerung.md`.
 * Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
   * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
   * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
   * Readiness prueft in Plan 01 nur lokale Runtime-/Konfigurationsbereitschaft, nicht die Live-Erreichbarkeit des Backends.
-  * `GET /gateway/terminal` prueft bereits Upgrade-Header und Grant-Header, liefert aber bis Plan 02 bewusst nur `501 Not Implemented`.
+  * `GET /gateway/terminal` fuehrt jetzt ein echtes WebSocket-Upgrade mit vorgelagerter Header-/Grant-Pruefung aus.
+  * Der Header-basierte Handshake ist der alleinige Autorisierungspfad; `authorize`/`authorized` wurden aus dem aktiven Browser-Gateway-Protokoll entfernt und im `spec`-Submodul nachgezogen.
+  * Sitzungen werden zentral verwaltet und haben aktuell eine ausgehende Queue von 16 Nachrichten.
 * `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

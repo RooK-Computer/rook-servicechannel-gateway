@@ -1,8 +1,8 @@
 # Plan 02 - Browser-WebSocket und Sitzungssteuerung
 
-Status: Entwurf fuer Review
+Status: Umgesetzt, wartet auf Review
 
-Zuletzt aktualisiert: initial angelegt
+Zuletzt aktualisiert: 2026-04-01
 
 ## Ziel
 
@@ -10,7 +10,7 @@ Die Browser-seitige Echtzeitverbindung soll fachlich korrekt angenommen und als 
 
 ## Abhaengigkeit
 
-Plan 01 muss abgeschlossen und reviewt sein.
+Plan 01 ist umgesetzt; die Umsetzung von Plan 02 ist auf dieser Basis erfolgt und wartet jetzt auf Review.
 
 ## Eingaben und Referenzen
 
@@ -49,10 +49,8 @@ Dieses Modell soll zentral gepflegt werden, nicht verteilt in Handlern.
 
 ### 3. Nachrichtenmodell umsetzen
 
-Mindestens diese Nachrichtentypen gemaess Draft beruecksichtigen:
+Mindestens diese Nachrichtentypen gemaess aktualisiertem Draft beruecksichtigen:
 
-* `authorize`
-* `authorized`
 * `input`
 * `output`
 * `resize`
@@ -61,6 +59,7 @@ Mindestens diese Nachrichtentypen gemaess Draft beruecksichtigen:
 
 Festlegung fuer die Umsetzung:
 
+* Autorisierung ausschliesslich ueber den Handshake-Header, keine aktiven Laufzeitnachrichten `authorize` oder `authorized`
 * Kontrollnachrichten als Text-Frames
 * Terminaldaten optional auch als Binary-Frames
 * strikte Validierung unbekannter oder unvollstaendiger Kontrollnachrichten
@@ -109,22 +108,24 @@ Festlegung fuer die Umsetzung:
 
 ## Fortschrittspflege
 
-Bei Umsetzung dieses Plans laufend nachziehen:
+Bei Umsetzung dieses Plans nachgezogen:
 
-* final gewaehltes Fehlerformat fuer Handshake und Laufzeit
-* finale Session-Statusfelder
-* beschlossene Queue-Groessen oder Zeitlimits
+* finales Fehlerformat vor dem Upgrade: HTTP-JSON mit `code` und `message`
+* Laufzeit-Protokollfehler nach dem Upgrade: `error`-Nachricht gefolgt von `close` und WebSocket-Close
+* finale Session-Statusfelder im Code: Session-ID, Browser-State, Grant-Ergebnis inklusive Ziel-IP, Start-/Aktivitaets-/Endzeit und Abschlussgrund
+* initiale Queue-Groesse: 16 Nachrichten pro Sitzung
+* beschlossene Protokollaenderung: Header-Handshake ist alleinige Autorisierung, `authorize`/`authorized` sind entfernt
 
 ## Offene Punkte
 
-* Welche WebSocket-Close-Codes final verwendet werden sollen
-* Ob `authorize` und `authorized` trotz Header-basiertem Grant als explizite Kontrollnachrichten benoetigt bleiben
-* Ob spaeter Heartbeats/Pings explizit modelliert werden muessen
+* Welche WebSocket-Close-Codes final langfristig stabil bleiben sollen
+* Wie spaeter Heartbeats/Pings explizit modelliert werden muessen
+* Wie Plan 03 den Uebergang von Browser-Sitzung zu echter SSH-Bridge ohne zusaetzliche Initialnachricht am saubersten andockt
 
 ## Naechste Uebergabe
 
 Nach Abschluss dieses Plans:
 
-1. Status aktualisieren.
-2. Das tatsaechliche Nachrichtenmodell im Plan festschreiben.
-3. Dann stoppen und Review abwarten.
+1. Status in `plans/README.md` und in diesem Dokument aktualisieren.
+2. Die konzeptionelle Protokollaenderung auch im `spec`-Submodul nachziehen, damit Backend- und Gateway-Team dieselben Annahmen nutzen.
+3. Danach stoppen und Review abwarten.

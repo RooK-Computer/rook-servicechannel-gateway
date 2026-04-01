@@ -2,6 +2,13 @@ package websocket
 
 import "context"
 
+type FrameType string
+
+const (
+	TextFrame   FrameType = "text"
+	BinaryFrame FrameType = "binary"
+)
+
 type Connection interface {
 	ReadMessage(context.Context) (Message, error)
 	WriteMessage(context.Context, Message) error
@@ -9,6 +16,6 @@ type Connection interface {
 }
 
 type Message struct {
-	Type string
+	Type FrameType
 	Data []byte
 }

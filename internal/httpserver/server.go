@@ -11,10 +11,13 @@ import (
 
 	"rook-servicechannel-gateway/internal/config"
 	"rook-servicechannel-gateway/internal/grants"
+	"rook-servicechannel-gateway/internal/session"
+	gatewayws "rook-servicechannel-gateway/internal/websocket"
 )
 
 type Server struct {
 	logger     *slog.Logger
+	sessions   *session.Registry
 	httpServer *http.Server
 }
 
@@ -28,12 +31,12 @@ func New(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator
 		logger = slog.Default()
 	}
 
-	_ = grantValidator
-
-	handler := NewHandler(cfg, logger)
+	sessions := session.NewRegistry(logger)
+	handler := NewHandler(cfg, logger, grantValidator, sessions)
 
 	return &Server{
-		logger: logger,
+		logger:   logger,
+		sessions: sessions,
 		httpServer: &http.Server{
 			Addr:              cfg.HTTP.ListenAddress,
 			Handler:           handler,
@@ -42,7 +45,15 @@ func New(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator
 	}
 }
 
-func NewHandler(cfg config.Config, logger *slog.Logger) http.Handler {
+func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator, sessions *session.Registry) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if sessions == nil {
+		sessions = session.NewRegistry(logger)
+	}
+
+	upgrader := gatewayws.NewUpgrader()
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -74,15 +85,48 @@ func NewHandler(cfg config.Config, logger *slog.Logger) http.Handler {
 			return
 		}
 
-		if strings.TrimSpace(r.Header.Get(cfg.HTTP.GrantHeaderName)) == "" {
+		token := strings.TrimSpace(r.Header.Get(cfg.HTTP.GrantHeaderName))
+		if token == "" {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "missing_grant_header", Message: "terminal grant header is required"})
 			return
 		}
 
-		if logger != nil {
-			logger.Info("terminal handshake placeholder reached")
+		if grantValidator == nil {
+			writeJSON(w, http.StatusBadGateway, errorResponse{Code: "grant_validator_unavailable", Message: "grant validation is not configured"})
+			return
 		}
-		writeJSON(w, http.StatusNotImplemented, errorResponse{Code: "not_implemented", Message: "websocket session handling will be added in plan 02"})
+
+		validationResult, err := grantValidator.ValidateToken(r.Context(), token)
+		if err != nil {
+			status, payload := classifyGrantError(err)
+			writeJSON(w, status, payload)
+			return
+		}
+
+		browserConn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("websocket upgrade failed", "error", err)
+			}
+			return
+		}
+
+		handle, err := sessions.Start(context.Background(), session.StartRequest{
+			Grant:   validationResult,
+			Browser: browserConn,
+			Logger:  logger,
+		})
+		if err != nil {
+			_ = browserConn.Close(http.StatusInternalServerError, "session start failed")
+			if logger != nil {
+				logger.Error("session start failed", "error", err)
+			}
+			return
+		}
+
+		if logger != nil {
+			logger.Info("browser websocket session started", "sessionID", handle.ID(), "ipAddress", validationResult.IPAddress)
+		}
 	})
 
 	return mux
@@ -104,6 +148,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		s.logger.Info("shutting down http server")
+		_ = s.sessions.CloseAll(context.Background(), session.EndReasonServerShutdown)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
@@ -111,6 +156,33 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		return <-errCh
 	}
+}
+
+func classifyGrantError(err error) (int, errorResponse) {
+	var invalidGrant *grants.InvalidGrantError
+	if errors.As(err, &invalidGrant) {
+		return http.StatusForbidden, errorResponse{Code: invalidGrant.Code, Message: invalidGrant.Message}
+	}
+
+	var backendErr *grants.BackendError
+	if errors.As(err, &backendErr) {
+		message := backendErr.Message
+		if strings.TrimSpace(message) == "" {
+			message = "backend validation failed"
+		}
+		code := backendErr.Code
+		if strings.TrimSpace(code) == "" {
+			code = "backend_validation_failed"
+		}
+		return http.StatusBadGateway, errorResponse{Code: code, Message: message}
+	}
+
+	var transportErr *grants.TransportError
+	if errors.As(err, &transportErr) {
+		return http.StatusBadGateway, errorResponse{Code: "backend_unreachable", Message: transportErr.Error()}
+	}
+
+	return http.StatusBadGateway, errorResponse{Code: "grant_validation_failed", Message: err.Error()}
 }
 
 func hasUpgradeHeaders(header http.Header) bool {
