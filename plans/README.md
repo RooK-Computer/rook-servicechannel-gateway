@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Plan 02 umgesetzt, wartet auf Review
+Status: Plan 03 umgesetzt, wartet auf Review
 
 ## Ziel dieser Planmappe
 
@@ -57,16 +57,16 @@ secrets/
 | Plan | Thema | Status | Abhaengigkeit | Review-Gate |
 | --- | --- | --- | --- | --- |
 | 01 | Runtime-Grundgeruest und Backend-Validierung | Reviewed/abgenommen | keine | Pflicht |
-| 02 | Browser-WebSocket und Sitzungssteuerung | Im Review | Plan 01 | Pflicht |
-| 03 | SSH-Bridge und Terminaldatenpfad | Entwurf | Plan 02 | Pflicht |
+| 02 | Browser-WebSocket und Sitzungssteuerung | Reviewed/abgenommen | Plan 01 | Pflicht |
+| 03 | SSH-Bridge und Terminaldatenpfad | Im Review | Plan 02 | Pflicht |
 | 04 | Hardening, Betrieb und Lieferfaehigkeit | Entwurf | Plan 03 | Pflicht |
 
 ## Fortschrittspflege
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* Aktuell ist kein weiterer Plan in Arbeit; Plan 02 wurde umgesetzt und haengt im Review.
-* Im Review haengt `plans/02-browser-websocket-und-sitzungssteuerung.md`.
+* Aktuell ist kein weiterer Plan in Arbeit; Plan 03 wurde umgesetzt und haengt im Review.
+* Im Review haengt `plans/03-ssh-bridge-und-terminaldatenpfad.md`.
 * Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
   * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
   * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
@@ -74,4 +74,6 @@ Bei spaeterer Umsetzung hier nachziehen:
   * `GET /gateway/terminal` fuehrt jetzt ein echtes WebSocket-Upgrade mit vorgelagerter Header-/Grant-Pruefung aus.
   * Der Header-basierte Handshake ist der alleinige Autorisierungspfad; `authorize`/`authorized` wurden aus dem aktiven Browser-Gateway-Protokoll entfernt und im `spec`-Submodul nachgezogen.
   * Sitzungen werden zentral verwaltet und haben aktuell eine ausgehende Queue von 16 Nachrichten.
+  * SSH-Bridge und PTY-Datenpfad sind jetzt produktiv angebunden.
+  * Host-Key-Verifikation wird fuer den aktuellen MVP bewusst umgangen und muss in Plan 04 gezielt nachgehaertet werden.
 * `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

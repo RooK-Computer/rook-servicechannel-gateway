@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	gws "github.com/gorilla/websocket"
 
 	"rook-servicechannel-gateway/internal/grants"
+	"rook-servicechannel-gateway/internal/sshbridge"
 	gatewayws "rook-servicechannel-gateway/internal/websocket"
 )
 
@@ -28,6 +30,7 @@ type Session struct {
 	id         string
 	grant      grants.ValidationResult
 	browser    gatewayws.Connection
+	console    sshbridge.Session
 	logger     *slog.Logger
 	cleanup    CleanupHook
 	manager    *Registry
@@ -42,6 +45,12 @@ type Session struct {
 	endReason  EndReason
 }
 
+type loopResult struct {
+	reason      EndReason
+	closeCode   int
+	closeReason string
+}
+
 func NewRegistry(logger *slog.Logger) *Registry {
 	if logger == nil {
 		logger = slog.Default()
@@ -53,12 +62,30 @@ func (r *Registry) Start(ctx context.Context, request StartRequest) (Handle, err
 	if request.Browser == nil {
 		return nil, fmt.Errorf("browser connection is required")
 	}
+	if request.Bridge == nil {
+		return nil, fmt.Errorf("ssh bridge is required")
+	}
+	if request.Grant.IPAddress == "" {
+		return nil, fmt.Errorf("validated grant is missing target ip")
+	}
+
+	console, err := request.Bridge.Open(ctx, sshbridge.SessionRequest{
+		IPAddress: request.Grant.IPAddress,
+		Account:   request.SSHAccount,
+		Term:      "xterm-256color",
+		Rows:      24,
+		Columns:   80,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open ssh bridge: %w", err)
+	}
 
 	now := time.Now().UTC()
 	session := &Session{
 		id:         newSessionID(),
 		grant:      request.Grant,
 		browser:    request.Browser,
+		console:    console,
 		logger:     request.Logger,
 		cleanup:    request.CleanupHook,
 		manager:    r,
@@ -107,16 +134,7 @@ func (s *Session) ID() string {
 func (s *Session) Snapshot() Snapshot {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
-	return Snapshot{
-		ID:            s.id,
-		State:         s.state,
-		Grant:         s.grant,
-		StartedAt:     s.startedAt,
-		LastActivity:  s.lastActive,
-		EndedAt:       s.endedAt,
-		EndReason:     s.endReason,
-		OutputBacklog: len(s.outbound),
-	}
+	return Snapshot{ID: s.id, State: s.state, Grant: s.grant, StartedAt: s.startedAt, LastActivity: s.lastActive, EndedAt: s.endedAt, EndReason: s.endReason, OutputBacklog: len(s.outbound)}
 }
 
 func (s *Session) Enqueue(message gatewayws.Message) error {
@@ -125,7 +143,6 @@ func (s *Session) Enqueue(message gatewayws.Message) error {
 		return fmt.Errorf("session closed")
 	default:
 	}
-
 	select {
 	case s.outbound <- message:
 		return nil
@@ -137,64 +154,96 @@ func (s *Session) Enqueue(message gatewayws.Message) error {
 
 func (s *Session) run(ctx context.Context) {
 	writeDone := make(chan struct{})
+	results := make(chan loopResult, 2)
 	go s.writeLoop(ctx, writeDone)
+	go func() { results <- s.outputLoop() }()
+	go func() { results <- s.readLoop(ctx) }()
 
-	reason, closeCode, closeReason := s.readLoop(ctx)
-	s.close(reason, closeCode, closeReason)
+	result := <-results
+	s.close(result.reason, result.closeCode, result.closeReason)
 	<-writeDone
 }
 
-func (s *Session) readLoop(ctx context.Context) (EndReason, int, string) {
+func (s *Session) readLoop(ctx context.Context) loopResult {
 	for {
 		message, err := s.browser.ReadMessage(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				return EndReasonServerShutdown, gws.CloseGoingAway, string(EndReasonServerShutdown)
+				return loopResult{reason: EndReasonServerShutdown, closeCode: gws.CloseGoingAway, closeReason: string(EndReasonServerShutdown)}
 			}
 			if gatewayws.IsPeerClosed(err) {
-				return EndReasonBrowserDisconnect, gws.CloseNormalClosure, string(EndReasonBrowserDisconnect)
-			}
-			var protocolErr *gatewayws.ProtocolError
-			if errors.As(err, &protocolErr) {
-				s.writeImmediate(ctx, gatewayws.NewServerError(protocolErr.Code, protocolErr.Message))
-				s.writeImmediate(ctx, gatewayws.NewServerClose(protocolErr.Message))
-				return EndReasonProtocolViolation, gws.CloseUnsupportedData, protocolErr.Message
+				return loopResult{reason: EndReasonBrowserDisconnect, closeCode: gws.CloseNormalClosure, closeReason: string(EndReasonBrowserDisconnect)}
 			}
 			if s.logger != nil {
 				s.logger.Error("websocket read failed", "sessionID", s.id, "error", err)
 			}
-			return EndReasonInternalError, gws.CloseInternalServerErr, "read failed"
+			return loopResult{reason: EndReasonInternalError, closeCode: gws.CloseInternalServerErr, closeReason: "read failed"}
 		}
 
 		s.touch()
-
 		parsed, err := gatewayws.ParseClientMessage(message)
 		if err != nil {
 			var protocolErr *gatewayws.ProtocolError
 			if errors.As(err, &protocolErr) {
 				s.writeImmediate(ctx, gatewayws.NewServerError(protocolErr.Code, protocolErr.Message))
 				s.writeImmediate(ctx, gatewayws.NewServerClose(protocolErr.Message))
-				return EndReasonProtocolViolation, gws.ClosePolicyViolation, protocolErr.Message
+				return loopResult{reason: EndReasonProtocolViolation, closeCode: gws.ClosePolicyViolation, closeReason: protocolErr.Message}
 			}
-			return EndReasonInternalError, gws.CloseInternalServerErr, "message parsing failed"
+			return loopResult{reason: EndReasonInternalError, closeCode: gws.CloseInternalServerErr, closeReason: "message parsing failed"}
 		}
 
 		switch parsed.Type {
 		case gatewayws.MessageTypeInput:
-			continue
+			payload := parsed.BinaryData
+			if payload == nil {
+				payload = []byte(parsed.Input)
+			}
+			if len(payload) == 0 {
+				continue
+			}
+			if _, err := s.console.Write(payload); err != nil {
+				return loopResult{reason: EndReasonSSHError, closeCode: gws.CloseInternalServerErr, closeReason: "ssh write failed"}
+			}
 		case gatewayws.MessageTypeResize:
-			continue
+			if err := s.console.Resize(ctx, sshbridge.PtySize{Rows: parsed.Rows, Columns: parsed.Columns}); err != nil {
+				s.writeImmediate(ctx, gatewayws.NewServerError("resize_failed", err.Error()))
+				return loopResult{reason: EndReasonSSHError, closeCode: gws.ClosePolicyViolation, closeReason: "resize_failed"}
+			}
 		case gatewayws.MessageTypeClose:
 			reason := parsed.Reason
 			if reason == "" {
 				reason = string(EndReasonClientClose)
 			}
 			s.writeImmediate(ctx, gatewayws.NewServerClose(reason))
-			return EndReasonClientClose, gws.CloseNormalClosure, reason
+			return loopResult{reason: EndReasonClientClose, closeCode: gws.CloseNormalClosure, closeReason: reason}
 		default:
 			s.writeImmediate(ctx, gatewayws.NewServerError("unsupported_message", "message type is not supported in the current plan"))
 			s.writeImmediate(ctx, gatewayws.NewServerClose("unsupported_message"))
-			return EndReasonProtocolViolation, gws.ClosePolicyViolation, "unsupported_message"
+			return loopResult{reason: EndReasonProtocolViolation, closeCode: gws.ClosePolicyViolation, closeReason: "unsupported_message"}
+		}
+	}
+}
+
+func (s *Session) outputLoop() loopResult {
+	buffer := make([]byte, 4096)
+	for {
+		count, err := s.console.Read(buffer)
+		if count > 0 {
+			s.touch()
+			if enqueueErr := s.Enqueue(gatewayws.NewServerOutput(buffer[:count])); enqueueErr != nil {
+				return loopResult{reason: EndReasonSlowClient, closeCode: gws.ClosePolicyViolation, closeReason: "outbound queue exhausted"}
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				s.writeImmediate(context.Background(), gatewayws.NewServerClose(string(EndReasonConsoleClosed)))
+				return loopResult{reason: EndReasonConsoleClosed, closeCode: gws.CloseNormalClosure, closeReason: string(EndReasonConsoleClosed)}
+			}
+			if s.logger != nil {
+				s.logger.Error("ssh output read failed", "sessionID", s.id, "error", err)
+			}
+			s.writeImmediate(context.Background(), gatewayws.NewServerError("ssh_read_failed", err.Error()))
+			return loopResult{reason: EndReasonSSHError, closeCode: gws.CloseInternalServerErr, closeReason: "ssh_read_failed"}
 		}
 	}
 }
@@ -228,26 +277,21 @@ func (s *Session) writeImmediate(ctx context.Context, message gatewayws.Message)
 func (s *Session) close(reason EndReason, code int, closeReason string) {
 	s.closeOnce.Do(func() {
 		now := time.Now().UTC()
-
 		s.stateMu.Lock()
 		s.state = BrowserStateClosing
 		s.lastActive = now
 		s.endedAt = now
 		s.endReason = reason
 		s.stateMu.Unlock()
-
 		close(s.closed)
-
 		_ = s.browser.Close(code, closeReason)
-
+		_ = s.console.Close()
 		s.manager.mu.Lock()
 		delete(s.manager.sessions, s.id)
 		s.manager.mu.Unlock()
-
 		s.stateMu.Lock()
 		s.state = BrowserStateClosed
 		s.stateMu.Unlock()
-
 		if s.cleanup != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

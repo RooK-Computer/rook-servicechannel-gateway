@@ -7,27 +7,36 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	envConfigFile        = "GATEWAY_CONFIG_FILE"
-	envListenAddress     = "GATEWAY_LISTEN_ADDRESS"
-	envBackendBaseURL    = "GATEWAY_BACKEND_BASE_URL"
-	envBackendTimeout    = "GATEWAY_BACKEND_TIMEOUT"
-	envGrantHeaderName   = "GATEWAY_GRANT_HEADER_NAME"
-	envLogLevel          = "GATEWAY_LOG_LEVEL"
-	envSSHPrivateKeyPath = "GATEWAY_SSH_PRIVATE_KEY_PATH"
-	envSSHPublicKeyPath  = "GATEWAY_SSH_PUBLIC_KEY_PATH"
+	envConfigFile               = "GATEWAY_CONFIG_FILE"
+	envListenAddress            = "GATEWAY_LISTEN_ADDRESS"
+	envBackendBaseURL           = "GATEWAY_BACKEND_BASE_URL"
+	envBackendTimeout           = "GATEWAY_BACKEND_TIMEOUT"
+	envGrantHeaderName          = "GATEWAY_GRANT_HEADER_NAME"
+	envLogLevel                 = "GATEWAY_LOG_LEVEL"
+	envSSHPrivateKeyPath        = "GATEWAY_SSH_PRIVATE_KEY_PATH"
+	envSSHPublicKeyPath         = "GATEWAY_SSH_PUBLIC_KEY_PATH"
+	envSSHUsername              = "GATEWAY_SSH_USERNAME"
+	envSSHPort                  = "GATEWAY_SSH_PORT"
+	envSSHConnectTimeout        = "GATEWAY_SSH_CONNECT_TIMEOUT"
+	envSSHInsecureIgnoreHostKey = "GATEWAY_SSH_INSECURE_IGNORE_HOST_KEY"
 )
 
 const (
-	defaultBackendTimeout  = 5 * time.Second
-	defaultGrantHeaderName = "X-Rook-Terminal-Grant"
-	defaultLogLevel        = slog.LevelInfo
-	defaultSSHPrivateKey   = "secrets/gateway_ssh_ed25519"
-	defaultSSHPublicKey    = "secrets/gateway_ssh_ed25519.pub"
+	defaultBackendTimeout           = 5 * time.Second
+	defaultGrantHeaderName          = "X-Rook-Terminal-Grant"
+	defaultLogLevel                 = slog.LevelInfo
+	defaultSSHPrivateKey            = "secrets/gateway_ssh_ed25519"
+	defaultSSHPublicKey             = "secrets/gateway_ssh_ed25519.pub"
+	defaultSSHUsername              = "pi"
+	defaultSSHPort                  = 22
+	defaultSSHConnectTimeout        = 5 * time.Second
+	defaultSSHInsecureIgnoreHostKey = true
 )
 
 type Config struct {
@@ -35,6 +44,7 @@ type Config struct {
 	Backend BackendConfig
 	Logging LoggingConfig
 	Secrets SecretsConfig
+	SSH     SSHConfig
 }
 
 type HTTPConfig struct {
@@ -56,6 +66,13 @@ type SecretsConfig struct {
 	SSHPublicKeyPath  string
 }
 
+type SSHConfig struct {
+	Username              string
+	Port                  int
+	ConnectTimeout        time.Duration
+	InsecureIgnoreHostKey bool
+}
+
 func Load() (Config, error) {
 	vars, err := loadVars(os.LookupEnv)
 	if err != nil {
@@ -74,12 +91,16 @@ func Resolve(vars map[string]string) (Config, error) {
 		Backend: BackendConfig{
 			BaseURL: strings.TrimSpace(vars[envBackendBaseURL]),
 		},
-		Logging: LoggingConfig{
-			Level: defaultLogLevel,
-		},
+		Logging: LoggingConfig{Level: defaultLogLevel},
 		Secrets: SecretsConfig{
 			SSHPrivateKeyPath: firstNonEmpty(vars[envSSHPrivateKeyPath], defaultSSHPrivateKey),
 			SSHPublicKeyPath:  firstNonEmpty(vars[envSSHPublicKeyPath], defaultSSHPublicKey),
+		},
+		SSH: SSHConfig{
+			Username:              firstNonEmpty(vars[envSSHUsername], defaultSSHUsername),
+			Port:                  defaultSSHPort,
+			ConnectTimeout:        defaultSSHConnectTimeout,
+			InsecureIgnoreHostKey: defaultSSHInsecureIgnoreHostKey,
 		},
 	}
 
@@ -89,6 +110,30 @@ func Resolve(vars map[string]string) (Config, error) {
 		return Config{}, fmt.Errorf("parse %s: %w", envBackendTimeout, err)
 	}
 	cfg.Backend.ValidationTimeout = timeout
+
+	if portValue := strings.TrimSpace(vars[envSSHPort]); portValue != "" {
+		port, err := strconv.Atoi(portValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envSSHPort, err)
+		}
+		cfg.SSH.Port = port
+	}
+
+	if connectTimeoutValue := strings.TrimSpace(vars[envSSHConnectTimeout]); connectTimeoutValue != "" {
+		parsedTimeout, err := time.ParseDuration(connectTimeoutValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envSSHConnectTimeout, err)
+		}
+		cfg.SSH.ConnectTimeout = parsedTimeout
+	}
+
+	if insecureValue := strings.TrimSpace(vars[envSSHInsecureIgnoreHostKey]); insecureValue != "" {
+		parsedBool, err := strconv.ParseBool(insecureValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envSSHInsecureIgnoreHostKey, err)
+		}
+		cfg.SSH.InsecureIgnoreHostKey = parsedBool
+	}
 
 	if levelValue := strings.TrimSpace(vars[envLogLevel]); levelValue != "" {
 		level, err := parseLogLevel(levelValue)
@@ -109,7 +154,6 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.HTTP.ListenAddress) == "" {
 		return fmt.Errorf("%s must be set", envListenAddress)
 	}
-
 	if strings.TrimSpace(c.Backend.BaseURL) == "" {
 		return fmt.Errorf("%s must be set", envBackendBaseURL)
 	}
@@ -124,23 +168,27 @@ func (c Config) Validate() error {
 	if parsedURL.Host == "" {
 		return fmt.Errorf("%s must include a host", envBackendBaseURL)
 	}
-
 	if c.Backend.ValidationTimeout <= 0 {
 		return fmt.Errorf("%s must be greater than zero", envBackendTimeout)
 	}
-
 	if strings.TrimSpace(c.HTTP.GrantHeaderName) == "" {
 		return fmt.Errorf("%s must not be empty", envGrantHeaderName)
 	}
-
 	if strings.TrimSpace(c.Secrets.SSHPrivateKeyPath) == "" {
 		return fmt.Errorf("%s must not be empty", envSSHPrivateKeyPath)
 	}
-
 	if strings.TrimSpace(c.Secrets.SSHPublicKeyPath) == "" {
 		return fmt.Errorf("%s must not be empty", envSSHPublicKeyPath)
 	}
-
+	if strings.TrimSpace(c.SSH.Username) == "" {
+		return fmt.Errorf("%s must not be empty", envSSHUsername)
+	}
+	if c.SSH.Port <= 0 || c.SSH.Port > 65535 {
+		return fmt.Errorf("%s must be between 1 and 65535", envSSHPort)
+	}
+	if c.SSH.ConnectTimeout <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envSSHConnectTimeout)
+	}
 	return nil
 }
 
@@ -182,6 +230,10 @@ func loadVars(lookup func(string) (string, bool)) (map[string]string, error) {
 		envLogLevel,
 		envSSHPrivateKeyPath,
 		envSSHPublicKeyPath,
+		envSSHUsername,
+		envSSHPort,
+		envSSHConnectTimeout,
+		envSSHInsecureIgnoreHostKey,
 	} {
 		if value, ok := lookup(key); ok {
 			vars[key] = value
@@ -246,3 +298,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 var ErrMissingConfig = errors.New("missing configuration")
+
+func EnvSSHInsecureIgnoreHostKey() string {
+	return envSSHInsecureIgnoreHostKey
+}

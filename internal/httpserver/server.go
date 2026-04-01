@@ -9,9 +9,12 @@ import (
 	"strings"
 	"time"
 
+	gws "github.com/gorilla/websocket"
+
 	"rook-servicechannel-gateway/internal/config"
 	"rook-servicechannel-gateway/internal/grants"
 	"rook-servicechannel-gateway/internal/session"
+	"rook-servicechannel-gateway/internal/sshbridge"
 	gatewayws "rook-servicechannel-gateway/internal/websocket"
 )
 
@@ -26,26 +29,17 @@ type errorResponse struct {
 	Message string `json:"message"`
 }
 
-func New(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator) *Server {
+func New(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator, bridge sshbridge.Bridge) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	sessions := session.NewRegistry(logger)
-	handler := NewHandler(cfg, logger, grantValidator, sessions)
-
-	return &Server{
-		logger:   logger,
-		sessions: sessions,
-		httpServer: &http.Server{
-			Addr:              cfg.HTTP.ListenAddress,
-			Handler:           handler,
-			ReadHeaderTimeout: 5 * time.Second,
-		},
-	}
+	handler := NewHandler(cfg, logger, grantValidator, bridge, sessions)
+	return &Server{logger: logger, sessions: sessions, httpServer: &http.Server{Addr: cfg.HTTP.ListenAddress, Handler: handler, ReadHeaderTimeout: 5 * time.Second}}
 }
 
-func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator, sessions *session.Registry) http.Handler {
+func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Validator, bridge sshbridge.Bridge, sessions *session.Registry) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -55,47 +49,38 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 
 	upgrader := gatewayws.NewUpgrader()
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Code: "method_not_allowed", Message: "use GET"})
 			return
 		}
-
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Code: "method_not_allowed", Message: "use GET"})
 			return
 		}
-
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
-
 	mux.HandleFunc("/gateway/terminal", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, http.StatusMethodNotAllowed, errorResponse{Code: "method_not_allowed", Message: "use GET"})
 			return
 		}
-
 		if !hasUpgradeHeaders(r.Header) {
 			writeJSON(w, http.StatusUpgradeRequired, errorResponse{Code: "upgrade_required", Message: "websocket upgrade headers are required"})
 			return
 		}
-
 		token := strings.TrimSpace(r.Header.Get(cfg.HTTP.GrantHeaderName))
 		if token == "" {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "missing_grant_header", Message: "terminal grant header is required"})
 			return
 		}
-
 		if grantValidator == nil {
 			writeJSON(w, http.StatusBadGateway, errorResponse{Code: "grant_validator_unavailable", Message: "grant validation is not configured"})
 			return
 		}
-
 		validationResult, err := grantValidator.ValidateToken(r.Context(), token)
 		if err != nil {
 			status, payload := classifyGrantError(err)
@@ -110,25 +95,20 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 			}
 			return
 		}
-
-		handle, err := sessions.Start(context.Background(), session.StartRequest{
-			Grant:   validationResult,
-			Browser: browserConn,
-			Logger:  logger,
-		})
+		handle, err := sessions.Start(context.Background(), session.StartRequest{Grant: validationResult, Browser: browserConn, Bridge: bridge, SSHAccount: cfg.SSH.Username, Logger: logger})
 		if err != nil {
-			_ = browserConn.Close(http.StatusInternalServerError, "session start failed")
+			_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerError("ssh_bridge_failed", err.Error()))
+			_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerClose("session_start_failed"))
+			_ = browserConn.Close(gws.CloseInternalServerErr, "session start failed")
 			if logger != nil {
 				logger.Error("session start failed", "error", err)
 			}
 			return
 		}
-
 		if logger != nil {
 			logger.Info("browser websocket session started", "sessionID", handle.ID(), "ipAddress", validationResult.IPAddress)
 		}
 	})
-
 	return mux
 }
 
@@ -142,7 +122,6 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
-
 	select {
 	case err := <-errCh:
 		return err
@@ -163,7 +142,6 @@ func classifyGrantError(err error) (int, errorResponse) {
 	if errors.As(err, &invalidGrant) {
 		return http.StatusForbidden, errorResponse{Code: invalidGrant.Code, Message: invalidGrant.Message}
 	}
-
 	var backendErr *grants.BackendError
 	if errors.As(err, &backendErr) {
 		message := backendErr.Message
@@ -176,12 +154,10 @@ func classifyGrantError(err error) (int, errorResponse) {
 		}
 		return http.StatusBadGateway, errorResponse{Code: code, Message: message}
 	}
-
 	var transportErr *grants.TransportError
 	if errors.As(err, &transportErr) {
 		return http.StatusBadGateway, errorResponse{Code: "backend_unreachable", Message: transportErr.Error()}
 	}
-
 	return http.StatusBadGateway, errorResponse{Code: "grant_validation_failed", Message: err.Error()}
 }
 

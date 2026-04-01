@@ -11,9 +11,7 @@ import (
 func TestResolveRequiresListenAddress(t *testing.T) {
 	t.Parallel()
 
-	_, err := Resolve(map[string]string{
-		envBackendBaseURL: "https://backend.example.test",
-	})
+	_, err := Resolve(map[string]string{envBackendBaseURL: "https://backend.example.test"})
 	if err == nil || err.Error() != envListenAddress+" must be set" {
 		t.Fatalf("expected missing listen address error, got %v", err)
 	}
@@ -23,37 +21,48 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Resolve(map[string]string{
-		envListenAddress:   ":8080",
-		envBackendBaseURL:  "https://backend.example.test",
-		envBackendTimeout:  "7s",
-		envLogLevel:        "debug",
-		envGrantHeaderName: "X-Test-Grant",
+		envListenAddress:            ":8080",
+		envBackendBaseURL:           "https://backend.example.test",
+		envBackendTimeout:           "7s",
+		envLogLevel:                 "debug",
+		envGrantHeaderName:          "X-Test-Grant",
+		envSSHPort:                  "2022",
+		envSSHConnectTimeout:        "9s",
+		envSSHUsername:              "alice",
+		envSSHInsecureIgnoreHostKey: "true",
 	})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	if cfg.HTTP.ListenAddress != ":8080" {
-		t.Fatalf("unexpected listen address %q", cfg.HTTP.ListenAddress)
+	if cfg.HTTP.ListenAddress != ":8080" || cfg.Backend.ValidationTimeout != 7*time.Second || cfg.Logging.Level != slog.LevelDebug {
+		t.Fatalf("unexpected config %#v", cfg)
 	}
-	if cfg.Backend.ValidationTimeout != 7*time.Second {
-		t.Fatalf("unexpected timeout %v", cfg.Backend.ValidationTimeout)
+	if cfg.HTTP.GrantHeaderName != "X-Test-Grant" || cfg.Secrets.SSHPrivateKeyPath != defaultSSHPrivateKey {
+		t.Fatalf("unexpected config %#v", cfg)
 	}
-	if cfg.Logging.Level != slog.LevelDebug {
-		t.Fatalf("unexpected log level %v", cfg.Logging.Level)
+	if cfg.SSH.Port != 2022 || cfg.SSH.ConnectTimeout != 9*time.Second || cfg.SSH.Username != "alice" || !cfg.SSH.InsecureIgnoreHostKey {
+		t.Fatalf("unexpected ssh config %#v", cfg.SSH)
 	}
-	if cfg.HTTP.GrantHeaderName != "X-Test-Grant" {
-		t.Fatalf("unexpected grant header %q", cfg.HTTP.GrantHeaderName)
-	}
-	if cfg.Secrets.SSHPrivateKeyPath != defaultSSHPrivateKey {
-		t.Fatalf("unexpected private key path %q", cfg.Secrets.SSHPrivateKeyPath)
+}
+
+func TestResolveRejectsInvalidSSHPort(t *testing.T) {
+	t.Parallel()
+
+	_, err := Resolve(map[string]string{
+		envListenAddress:  ":8080",
+		envBackendBaseURL: "https://backend.example.test",
+		envSSHPort:        "70000",
+	})
+	if err == nil || err.Error() != envSSHPort+" must be between 1 and 65535" {
+		t.Fatalf("expected ssh port validation error, got %v", err)
 	}
 }
 
 func TestLoadMergesConfigFileAndEnvironment(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "gateway.env")
-	contents := "GATEWAY_LISTEN_ADDRESS=:7000\nGATEWAY_BACKEND_BASE_URL=https://file.example.test\nGATEWAY_BACKEND_TIMEOUT=3s\n"
+	contents := "GATEWAY_LISTEN_ADDRESS=:7000\nGATEWAY_BACKEND_BASE_URL=https://file.example.test\nGATEWAY_BACKEND_TIMEOUT=3s\nGATEWAY_SSH_PORT=2222\n"
 	if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -66,13 +75,7 @@ func TestLoadMergesConfigFileAndEnvironment(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.HTTP.ListenAddress != ":7000" {
-		t.Fatalf("unexpected listen address %q", cfg.HTTP.ListenAddress)
-	}
-	if cfg.Backend.BaseURL != "https://env.example.test" {
-		t.Fatalf("expected env override, got %q", cfg.Backend.BaseURL)
-	}
-	if cfg.Backend.ValidationTimeout != 3*time.Second {
-		t.Fatalf("unexpected timeout %v", cfg.Backend.ValidationTimeout)
+	if cfg.HTTP.ListenAddress != ":7000" || cfg.Backend.BaseURL != "https://env.example.test" || cfg.Backend.ValidationTimeout != 3*time.Second || cfg.SSH.Port != 2222 {
+		t.Fatalf("unexpected config %#v", cfg)
 	}
 }

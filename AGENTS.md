@@ -21,6 +21,7 @@ Dieses Repository enthaelt die Umsetzungsplanung fuer den Browser-Terminal-Gatew
 * Nach jedem abgeschlossenen Plan ist ein Review-Gate verpflichtend.
 * Laufende oder unterbrochene Arbeit muss so dokumentiert werden, dass ein frischer Agent ohne Chat-Historie uebernehmen kann.
 * Repo-lokale Plaene und die gemeinsame Statuspflege im `spec`-Submodule muessen synchron bleiben.
+* Kommunikation zwischen Agenten und mit dem Nutzer in diesem Repository standardmaessig auf Deutsch fuehren, sofern kein Mensch explizit etwas anderes verlangt.
 * Keine Secrets committen. Das Verzeichnis `secrets/` ist lokal fuer sensible Artefakte vorgesehen und per Root-`.gitignore` ausgeschlossen.
 * Der aktuell erzeugte Gateway-Schluessel liegt lokal unter:
   * `secrets/gateway_ssh_ed25519`

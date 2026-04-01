@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"rook-servicechannel-gateway/internal/grants"
+	"rook-servicechannel-gateway/internal/sshbridge"
 	gatewayws "rook-servicechannel-gateway/internal/websocket"
 )
 
@@ -17,6 +18,8 @@ type Manager interface {
 type StartRequest struct {
 	Grant       grants.ValidationResult
 	Browser     gatewayws.Connection
+	Bridge      sshbridge.Bridge
+	SSHAccount  string
 	Logger      *slog.Logger
 	CleanupHook CleanupHook
 }
@@ -42,6 +45,8 @@ const (
 	EndReasonSlowClient        EndReason = "slow_client"
 	EndReasonServerShutdown    EndReason = "server_shutdown"
 	EndReasonInternalError     EndReason = "internal_error"
+	EndReasonConsoleClosed     EndReason = "console_closed"
+	EndReasonSSHError          EndReason = "ssh_error"
 )
 
 type Snapshot struct {

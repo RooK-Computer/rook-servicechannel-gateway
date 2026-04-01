@@ -9,6 +9,9 @@ type Bridge interface {
 type SessionRequest struct {
 	IPAddress string
 	Account   string
+	Term      string
+	Rows      int
+	Columns   int
 }
 
 type Session interface {

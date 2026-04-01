@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 type MessageType string
@@ -44,6 +46,11 @@ type inputMessage struct {
 	Data string `json:"data"`
 }
 
+type outputMessage struct {
+	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
 type resizeMessage struct {
 	Type    string `json:"type"`
 	Rows    int    `json:"rows"`
@@ -67,7 +74,7 @@ func ParseClientMessage(message Message) (ClientMessage, error) {
 	}
 
 	var base controlMessage
-	if err := decodeStrict(message.Data, &base); err != nil {
+	if err := json.Unmarshal(message.Data, &base); err != nil {
 		return ClientMessage{}, &ProtocolError{Code: "invalid_json", Message: "control message must be valid JSON"}
 	}
 
@@ -104,6 +111,14 @@ func ParseClientMessage(message Message) (ClientMessage, error) {
 	}
 }
 
+func NewServerOutput(data []byte) Message {
+	if utf8.Valid(data) {
+		payload := outputMessage{Type: string(MessageTypeOutput), Data: string(data)}
+		return Message{Type: TextFrame, Data: mustJSON(payload)}
+	}
+	return Message{Type: BinaryFrame, Data: append([]byte(nil), data...)}
+}
+
 func NewServerError(code, message string) Message {
 	payload := errorMessage{Type: string(MessageTypeError), Code: code, Message: message}
 	return Message{Type: TextFrame, Data: mustJSON(payload)}
@@ -120,7 +135,7 @@ func decodeStrict(data []byte, target any) error {
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
-	if decoder.More() {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("unexpected trailing content")
 	}
 	return nil

@@ -1,8 +1,8 @@
 # Plan 03 - SSH-Bridge und Terminaldatenpfad
 
-Status: Entwurf fuer Review
+Status: Umgesetzt, wartet auf Review
 
-Zuletzt aktualisiert: initial angelegt
+Zuletzt aktualisiert: 2026-04-01
 
 ## Ziel
 
@@ -10,7 +10,7 @@ Nach erfolgreicher Browser- und Session-Orchestrierung soll das Gateway die echt
 
 ## Abhaengigkeit
 
-Plan 02 muss abgeschlossen und reviewt sein.
+Plan 02 ist umgesetzt; die Umsetzung von Plan 03 ist auf dieser Basis erfolgt und wartet jetzt auf Review.
 
 ## Eingaben und Referenzen
 
@@ -34,14 +34,14 @@ Mindestens diese Parameter brauchen Konfiguration:
 
 * Pfad zum privaten Schluessel
 * SSH-Username
+* SSH-Port
 * Connect-Timeout
-* optionaler Known-Hosts-Pfad
-* Verhalten bei Host-Key-Pruefung
+* Verhalten bei Host-Key-Pruefung fuer den aktuellen MVP
 
-Sichere Default-Richtung:
+MVP-Richtung:
 
-* Host-Key-Pruefung standardmaessig aktiv
-* ein expliziter unsicherer Dev-Modus nur per opt-in und klar markiert
+* Host-Key-Pruefung wird fuer den aktuellen MVP bewusst umgangen
+* die Abweichung wird explizit dokumentiert und spaeter in Plan 04 nachgehaertet
 
 ### 2. SSH-Client und Session-Aufbau
 
@@ -118,22 +118,24 @@ Vorgehen fuer spaetere Umsetzung:
 
 ## Fortschrittspflege
 
-Bei Umsetzung dieses Plans laufend nachziehen:
+Bei Umsetzung dieses Plans nachgezogen:
 
-* tatsaechliche Known-Hosts-Strategie
-* finale SSH-Library und Schluessel-Ladepfade
-* beobachtete Fehlerbilder beim PTY-Aufbau
+* SSH-Konfiguration erweitert um Username, Port, Connect-Timeout und explizites MVP-Flag `GATEWAY_SSH_INSECURE_IGNORE_HOST_KEY`
+* reale SSH-/PTY-Bridge in `internal/sshbridge/` mit `golang.org/x/crypto/ssh`
+* Browser-Session an SSH-STDIN/STDOUT und PTY-Resize angebunden
+* lokaler Integrationspfad gegen Test-SSH-Server plus WebSocket-Client implementiert
+* Host-Key-Strategie fuer den MVP festgelegt: bewusst umgangen, spaeter nachhaerten
 
 ## Offene Punkte
 
 * Ob das Backend zusaetzliche Audit-Felder im Grant-Response liefern wird
-* Wie Host-Key-Verteilung fuer Konsolen praktisch organisiert wird
+* Wie Host-Key-Verteilung fuer Konsolen nach dem MVP praktisch organisiert wird
 * Ob spaeter mehrere Ziel-Accounts noetig werden
 
 ## Naechste Uebergabe
 
 Nach Abschluss dieses Plans:
 
-1. Secret-Handling und Host-Key-Strategie im Plan konkret nachziehen.
-2. Status aktualisieren.
+1. Status in `plans/README.md` und in diesem Dokument aktualisieren.
+2. Die MVP-Abweichung bei der Host-Key-Verifikation fuer Plan 04 explizit als Hardening-Punkt uebernehmen.
 3. Dann stoppen und Review abwarten.

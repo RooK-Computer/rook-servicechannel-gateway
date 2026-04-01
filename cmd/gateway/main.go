@@ -10,6 +10,7 @@ import (
 	"rook-servicechannel-gateway/internal/grants"
 	"rook-servicechannel-gateway/internal/httpserver"
 	"rook-servicechannel-gateway/internal/shutdown"
+	"rook-servicechannel-gateway/internal/sshbridge"
 )
 
 func main() {
@@ -30,10 +31,17 @@ func run() error {
 		"listenAddress", cfg.HTTP.ListenAddress,
 		"backendBaseURL", cfg.Backend.BaseURL,
 		"grantHeaderName", cfg.HTTP.GrantHeaderName,
+		"sshUsername", cfg.SSH.Username,
+		"sshPort", cfg.SSH.Port,
+		"sshInsecureIgnoreHostKey", cfg.SSH.InsecureIgnoreHostKey,
 	)
 
 	validator := grants.NewClient(cfg.Backend.BaseURL, cfg.Backend.ValidationTimeout)
-	server := httpserver.New(cfg, logger, validator)
+	bridge, err := sshbridge.NewClient(cfg)
+	if err != nil {
+		return err
+	}
+	server := httpserver.New(cfg, logger, validator, bridge)
 
 	ctx, stop := shutdown.NotifyContext(context.Background())
 	defer stop()
