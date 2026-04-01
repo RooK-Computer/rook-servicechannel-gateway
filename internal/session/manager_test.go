@@ -199,6 +199,47 @@ func TestRegistryRemovesSessionOnClientClose(t *testing.T) {
 	}
 }
 
+func TestStartQueuesInitialMessages(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry(testLogger())
+	browser := newMockBrowser()
+	console := newStubConsole()
+
+	_, err := registry.Start(context.Background(), StartRequest{
+		Grant:           grants.ValidationResult{IPAddress: "10.0.0.8"},
+		Browser:         browser,
+		Bridge:          stubBridge{console: console},
+		SSHAccount:      "pi",
+		Logger:          testLogger(),
+		InitialMessages: []gatewayws.Message{gatewayws.NewServerAuthorized()},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		browser.writeMu.Lock()
+		count := len(browser.writes)
+		first := gatewayws.Message{}
+		if count > 0 {
+			first = browser.writes[0]
+		}
+		browser.writeMu.Unlock()
+		if count > 0 {
+			if string(first.Data) != `{"type":"authorized"}` {
+				t.Fatalf("unexpected first message %s", string(first.Data))
+			}
+			browser.push(gatewayws.Message{Type: gatewayws.TextFrame, Data: []byte(`{"type":"close"}`)})
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("expected initial websocket message to be written")
+}
+
 func TestSessionQueueOverflowClosesSession(t *testing.T) {
 	t.Parallel()
 
@@ -337,6 +378,47 @@ func TestResizePropagatesToConsole(t *testing.T) {
 	if len(console.resizes) != 1 || console.resizes[0].Rows != 30 || console.resizes[0].Columns != 120 {
 		t.Fatalf("unexpected resize propagation %#v", console.resizes)
 	}
+}
+
+func TestAuthorizeMessageRejectedOnceSessionIsActive(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry(testLogger())
+	browser := newMockBrowser()
+	console := newStubConsole()
+
+	_, err := registry.Start(context.Background(), StartRequest{
+		Grant:      grants.ValidationResult{IPAddress: "10.0.0.8"},
+		Browser:    browser,
+		Bridge:     stubBridge{console: console},
+		SSHAccount: "pi",
+		Logger:     testLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	browser.push(gatewayws.Message{Type: gatewayws.TextFrame, Data: []byte(`{"type":"authorize","token":"grant-123"}`)})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		browser.writeMu.Lock()
+		count := len(browser.writes)
+		last := gatewayws.Message{}
+		if count > 0 {
+			last = browser.writes[count-1]
+		}
+		browser.writeMu.Unlock()
+		if count >= 2 {
+			if string(last.Data) != `{"type":"close","reason":"protocol_violation"}` {
+				t.Fatalf("unexpected last websocket message %s", string(last.Data))
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatal("expected protocol violation response")
 }
 
 func TestConsoleOutputGetsQueuedForBrowser(t *testing.T) {

@@ -2,28 +2,18 @@ package httpserver
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	testssh "github.com/gliderlabs/ssh"
 	gws "github.com/gorilla/websocket"
-	cryptossh "golang.org/x/crypto/ssh"
 
 	"rook-servicechannel-gateway/internal/config"
 	"rook-servicechannel-gateway/internal/grants"
@@ -76,22 +66,35 @@ func TestTerminalHandshakeRequiresUpgradeHeaders(t *testing.T) {
 	}
 }
 
-func TestTerminalHandshakeRequiresGrantHeader(t *testing.T) {
+func TestTerminalHandshakeUpgradesWithoutGrantHeader(t *testing.T) {
 	t.Parallel()
 
-	request := httptest.NewRequest(http.MethodGet, "/gateway/terminal", nil)
-	request.Header.Set("Connection", "keep-alive, Upgrade")
-	request.Header.Set("Upgrade", "websocket")
-	recorder := httptest.NewRecorder()
+	server := httptest.NewServer(NewHandler(testConfig(), silentLogger(), stubValidator{}, nil, session.NewRegistry(silentLogger())))
+	defer server.Close()
 
-	NewHandler(testConfig(), silentLogger(), stubValidator{}, nil, session.NewRegistry(silentLogger())).ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("unexpected status %d", recorder.Code)
+	conn, response, err := gws.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/gateway/terminal", nil)
+	if err != nil {
+		t.Fatalf("Dial() error = %v (status %v)", err, response)
 	}
+	_ = conn.Close()
 }
 
-func TestTerminalHandshakeReturnsForbiddenForInvalidGrant(t *testing.T) {
+func TestTerminalHandshakeAllowsMismatchedOrigin(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(NewHandler(testConfig(), silentLogger(), stubValidator{}, nil, session.NewRegistry(silentLogger())))
+	defer server.Close()
+
+	conn, response, err := gws.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/gateway/terminal", http.Header{
+		"Origin": []string{"https://frontend.example.test"},
+	})
+	if err != nil {
+		t.Fatalf("Dial() error = %v (status %v)", err, response)
+	}
+	_ = conn.Close()
+}
+
+func TestTerminalAuthorizeReturnsForbiddenForInvalidGrant(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(NewHandler(testConfig(), silentLogger(), stubValidator{
@@ -99,26 +102,28 @@ func TestTerminalHandshakeReturnsForbiddenForInvalidGrant(t *testing.T) {
 	}, nil, session.NewRegistry(silentLogger())))
 	defer server.Close()
 
-	request, err := http.NewRequest(http.MethodGet, server.URL+"/gateway/terminal", nil)
+	conn, response, err := gws.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/gateway/terminal", nil)
 	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
+		t.Fatalf("Dial() error = %v (status %v)", err, response)
 	}
-	request.Header.Set("Connection", "Upgrade")
-	request.Header.Set("Upgrade", "websocket")
-	request.Header.Set("X-Rook-Terminal-Grant", "grant-123")
+	defer conn.Close()
 
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("Do() error = %v", err)
+	if err := conn.WriteJSON(map[string]string{"type": "authorize", "token": "grant-123"}); err != nil {
+		t.Fatalf("WriteJSON() error = %v", err)
 	}
-	defer response.Body.Close()
 
-	if response.StatusCode != http.StatusForbidden {
-		t.Fatalf("unexpected status %d", response.StatusCode)
+	message := readJSONMessage(t, conn)
+	if message["type"] != "error" || message["code"] != "grant_revoked" {
+		t.Fatalf("unexpected error payload %v", message)
+	}
+
+	closeMessage := readJSONMessage(t, conn)
+	if closeMessage["type"] != "close" || closeMessage["reason"] != "authorization_failed" {
+		t.Fatalf("unexpected close payload %v", closeMessage)
 	}
 }
 
-func TestTerminalHandshakeReturnsBadGatewayForBackendFailure(t *testing.T) {
+func TestTerminalAuthorizeReturnsBadGatewayForBackendFailure(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(NewHandler(testConfig(), silentLogger(), stubValidator{
@@ -126,26 +131,23 @@ func TestTerminalHandshakeReturnsBadGatewayForBackendFailure(t *testing.T) {
 	}, nil, session.NewRegistry(silentLogger())))
 	defer server.Close()
 
-	request, err := http.NewRequest(http.MethodGet, server.URL+"/gateway/terminal", nil)
+	conn, response, err := gws.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/gateway/terminal", nil)
 	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
+		t.Fatalf("Dial() error = %v (status %v)", err, response)
 	}
-	request.Header.Set("Connection", "Upgrade")
-	request.Header.Set("Upgrade", "websocket")
-	request.Header.Set("X-Rook-Terminal-Grant", "grant-123")
+	defer conn.Close()
 
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("Do() error = %v", err)
+	if err := conn.WriteJSON(map[string]string{"type": "authorize", "token": "grant-123"}); err != nil {
+		t.Fatalf("WriteJSON() error = %v", err)
 	}
-	defer response.Body.Close()
 
-	if response.StatusCode != http.StatusBadGateway {
-		t.Fatalf("unexpected status %d", response.StatusCode)
+	message := readJSONMessage(t, conn)
+	if message["type"] != "error" || message["code"] != "backend_failure" {
+		t.Fatalf("unexpected error payload %v", message)
 	}
 }
 
-func TestTerminalHandshakeUpgradesAndRejectsDeprecatedAuthorizeMessage(t *testing.T) {
+func TestTerminalHandshakeRejectsInputBeforeAuthorize(t *testing.T) {
 	t.Parallel()
 
 	sessions := session.NewRegistry(silentLogger())
@@ -156,38 +158,22 @@ func TestTerminalHandshakeUpgradesAndRejectsDeprecatedAuthorizeMessage(t *testin
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/gateway/terminal"
-	conn, response, err := gws.DefaultDialer.Dial(wsURL, http.Header{
-		"X-Rook-Terminal-Grant": []string{"grant-123"},
-	})
+	conn, response, err := gws.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("Dial() error = %v (status %v)", err, response)
 	}
 	defer conn.Close()
 
-	if err := conn.WriteJSON(map[string]string{"type": "authorize"}); err != nil {
+	if err := conn.WriteJSON(map[string]string{"type": "input", "data": "hello"}); err != nil {
 		t.Fatalf("WriteJSON() error = %v", err)
 	}
 
-	_, payload, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage() error = %v", err)
-	}
-	var protocolError map[string]string
-	if err := json.Unmarshal(payload, &protocolError); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
+	protocolError := readJSONMessage(t, conn)
 	if protocolError["type"] != "error" {
 		t.Fatalf("unexpected first message %v", protocolError)
 	}
 
-	_, payload, err = conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage() error = %v", err)
-	}
-	var closeMessage map[string]string
-	if err := json.Unmarshal(payload, &closeMessage); err != nil {
-		t.Fatalf("Unmarshal() error = %v", err)
-	}
+	closeMessage := readJSONMessage(t, conn)
 	if closeMessage["type"] != "close" {
 		t.Fatalf("unexpected close message %v", closeMessage)
 	}
@@ -211,79 +197,28 @@ func TestTerminalHandshakeUpgradesAndRejectsDeprecatedAuthorizeMessage(t *testin
 func TestTerminalHandshakeBridgesSSHOutputToBrowser(t *testing.T) {
 	t.Parallel()
 
-	_, serverSigner := mustSigner(t)
-	clientKey, clientSigner := mustSigner(t)
-	clientKeyPath := writePrivateKey(t, clientKey)
-	authorizedKey := clientSigner.PublicKey()
+	bridgeConsole := newBridgeConsole()
+	bridge := testBridge{console: bridgeConsole}
 
-	var resizeMu sync.Mutex
-	var resizeEvents []testssh.Window
-
-	sshServer := &testssh.Server{
-		Handler: func(sess testssh.Session) {
-			_, winCh, isPty := sess.Pty()
-			if !isPty {
-				_, _ = io.WriteString(sess, "pty required")
-				return
-			}
-			go func() {
-				for win := range winCh {
-					resizeMu.Lock()
-					resizeEvents = append(resizeEvents, win)
-					resizeMu.Unlock()
-				}
-			}()
-			buffer := make([]byte, 1024)
-			for {
-				count, err := sess.Read(buffer)
-				if count > 0 {
-					_, _ = sess.Write(buffer[:count])
-				}
-				if err != nil {
-					return
-				}
-			}
-		},
-		PublicKeyHandler: func(_ testssh.Context, key testssh.PublicKey) bool {
-			return string(key.Marshal()) == string(authorizedKey.Marshal())
-		},
-	}
-	sshServer.AddHostKey(serverSigner)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Listen() error = %v", err)
-	}
-	defer listener.Close()
-	go sshServer.Serve(listener)
-	defer sshServer.Close()
-
-	port, err := strconv.Atoi(strings.TrimPrefix(listener.Addr().String()[strings.LastIndex(listener.Addr().String(), ":"):], ":"))
-	if err != nil {
-		t.Fatalf("Atoi() error = %v", err)
-	}
-
-	cfg := testConfig()
-	cfg.Secrets.SSHPrivateKeyPath = clientKeyPath
-	cfg.SSH.Port = port
-	cfg.SSH.ConnectTimeout = 2 * time.Second
-	cfg.SSH.InsecureIgnoreHostKey = true
-
-	bridge, err := sshbridge.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
-	}
-
-	server := httptest.NewServer(NewHandler(cfg, silentLogger(), stubValidator{
-		result: grants.ValidationResult{IPAddress: "127.0.0.1"},
+	server := httptest.NewServer(NewHandler(testConfig(), silentLogger(), stubValidator{
+		result: grants.ValidationResult{IPAddress: "10.0.0.8"},
 	}, bridge, session.NewRegistry(silentLogger())))
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/gateway/terminal"
-	conn, _, err := gws.DefaultDialer.Dial(wsURL, http.Header{"X-Rook-Terminal-Grant": []string{"grant-123"}})
+	conn, _, err := gws.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("Dial() error = %v", err)
 	}
 	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]any{"type": "authorize", "token": "grant-123"}); err != nil {
+		t.Fatalf("WriteJSON(authorize) error = %v", err)
+	}
+	authorized := readJSONMessage(t, conn)
+	if authorized["type"] != "authorized" {
+		t.Fatalf("unexpected authorized message %v", authorized)
+	}
 
 	if err := conn.WriteJSON(map[string]any{"type": "resize", "rows": 33, "columns": 101}); err != nil {
 		t.Fatalf("WriteJSON(resize) error = %v", err)
@@ -306,15 +241,15 @@ func TestTerminalHandshakeBridgesSSHOutputToBrowser(t *testing.T) {
 
 	resizeDeadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(resizeDeadline) {
-		resizeMu.Lock()
-		count := len(resizeEvents)
-		last := testssh.Window{}
+		bridgeConsole.mu.Lock()
+		count := len(bridgeConsole.resizes)
+		last := sshbridge.PtySize{}
 		if count > 0 {
-			last = resizeEvents[count-1]
+			last = bridgeConsole.resizes[count-1]
 		}
-		resizeMu.Unlock()
+		bridgeConsole.mu.Unlock()
 		if count > 0 {
-			if last.Height != 33 || last.Width != 101 {
+			if last.Rows != 33 || last.Columns != 101 {
 				t.Fatalf("unexpected resize event %+v", last)
 			}
 			return
@@ -340,7 +275,6 @@ func testConfig() config.Config {
 	return config.Config{
 		HTTP: config.HTTPConfig{
 			ListenAddress:     ":0",
-			GrantHeaderName:   "X-Rook-Terminal-Grant",
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		Backend: config.BackendConfig{
@@ -373,12 +307,30 @@ func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func readJSONMessage(t *testing.T, conn *gws.Conn) map[string]string {
+	t.Helper()
+
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage() error = %v", err)
+	}
+
+	var message map[string]string
+	if err := json.Unmarshal(payload, &message); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	return message
+}
+
 type testBridge struct {
 	console *bridgeConsole
 }
 
 type bridgeConsole struct {
-	readCh chan []byte
+	readCh  chan []byte
+	mu      sync.Mutex
+	resizes []sshbridge.PtySize
+	closed  bool
 }
 
 func newBridgeConsole() *bridgeConsole {
@@ -397,32 +349,31 @@ func (b *bridgeConsole) Read(buffer []byte) (int, error) {
 	return copy(buffer, payload), nil
 }
 
-func (b *bridgeConsole) Write(buffer []byte) (int, error)                { return len(buffer), nil }
-func (b *bridgeConsole) Resize(context.Context, sshbridge.PtySize) error { return nil }
-func (b *bridgeConsole) Close() error {
-	close(b.readCh)
+func (b *bridgeConsole) Write(buffer []byte) (int, error) {
+	b.mu.Lock()
+	closed := b.closed
+	b.mu.Unlock()
+	if closed {
+		return 0, io.EOF
+	}
+	b.readCh <- append([]byte(nil), buffer...)
+	return len(buffer), nil
+}
+
+func (b *bridgeConsole) Resize(_ context.Context, size sshbridge.PtySize) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.resizes = append(b.resizes, size)
 	return nil
 }
 
-func mustSigner(t *testing.T) (*rsa.PrivateKey, cryptossh.Signer) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("GenerateKey() error = %v", err)
+func (b *bridgeConsole) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil
 	}
-	signer, err := cryptossh.NewSignerFromKey(key)
-	if err != nil {
-		t.Fatalf("NewSignerFromKey() error = %v", err)
-	}
-	return key, signer
-}
-
-func writePrivateKey(t *testing.T, privateKey *rsa.PrivateKey) string {
-	t.Helper()
-	privateKeyPath := filepath.Join(t.TempDir(), "id_ed25519")
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
-	if err := os.WriteFile(privateKeyPath, pemBytes, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	return privateKeyPath
+	b.closed = true
+	close(b.readCh)
+	return nil
 }

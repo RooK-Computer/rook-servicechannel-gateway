@@ -168,6 +168,15 @@ func (r *Registry) Start(ctx context.Context, request StartRequest) (Handle, err
 		"outboundQueueDepth":    fmt.Sprintf("%d", cap(session.outbound)),
 		"maxConcurrentSessions": fmt.Sprintf("%d", r.cfg.MaxConcurrent),
 	})
+	for _, message := range request.InitialMessages {
+		if err := session.Enqueue(message); err != nil {
+			_ = console.Close()
+			r.mu.Lock()
+			delete(r.sessions, session.id)
+			r.mu.Unlock()
+			return nil, fmt.Errorf("enqueue initial websocket message: %w", err)
+		}
+	}
 
 	go session.run(ctx)
 	return session, nil
@@ -286,6 +295,8 @@ func (s *Session) readLoop(ctx context.Context) loopResult {
 		}
 
 		switch parsed.Type {
+		case gatewayws.MessageTypeAuthorize:
+			return protocolViolationResult(&gatewayws.ProtocolError{Code: "unexpected_authorize", Message: "authorize is only allowed before the session is active"})
 		case gatewayws.MessageTypeInput:
 			payload := parsed.BinaryData
 			if payload == nil {

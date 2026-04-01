@@ -18,7 +18,6 @@ const (
 	envHTTPReadHeaderTimeout    = "GATEWAY_HTTP_READ_HEADER_TIMEOUT"
 	envBackendBaseURL           = "GATEWAY_BACKEND_BASE_URL"
 	envBackendTimeout           = "GATEWAY_BACKEND_TIMEOUT"
-	envGrantHeaderName          = "GATEWAY_GRANT_HEADER_NAME"
 	envLogLevel                 = "GATEWAY_LOG_LEVEL"
 	envSSHPrivateKeyPath        = "GATEWAY_SSH_PRIVATE_KEY_PATH"
 	envSSHPublicKeyPath         = "GATEWAY_SSH_PUBLIC_KEY_PATH"
@@ -35,7 +34,6 @@ const (
 const (
 	defaultHTTPReadHeaderTimeout    = 5 * time.Second
 	defaultBackendTimeout           = 5 * time.Second
-	defaultGrantHeaderName          = "X-Rook-Terminal-Grant"
 	defaultLogLevel                 = slog.LevelInfo
 	defaultSSHPrivateKey            = "secrets/gateway_ssh_ed25519"
 	defaultSSHPublicKey             = "secrets/gateway_ssh_ed25519.pub"
@@ -61,7 +59,6 @@ type Config struct {
 
 type HTTPConfig struct {
 	ListenAddress     string
-	GrantHeaderName   string
 	ReadHeaderTimeout time.Duration
 }
 
@@ -109,7 +106,6 @@ func Resolve(vars map[string]string) (Config, error) {
 	cfg := Config{
 		HTTP: HTTPConfig{
 			ListenAddress:     strings.TrimSpace(vars[envListenAddress]),
-			GrantHeaderName:   firstNonEmpty(vars[envGrantHeaderName], defaultGrantHeaderName),
 			ReadHeaderTimeout: defaultHTTPReadHeaderTimeout,
 		},
 		Backend: BackendConfig{
@@ -243,9 +239,6 @@ func (c Config) Validate() error {
 	if c.Backend.ValidationTimeout <= 0 {
 		return fmt.Errorf("%s must be greater than zero", envBackendTimeout)
 	}
-	if strings.TrimSpace(c.HTTP.GrantHeaderName) == "" {
-		return fmt.Errorf("%s must not be empty", envGrantHeaderName)
-	}
 	if c.HTTP.ReadHeaderTimeout <= 0 {
 		return fmt.Errorf("%s must be greater than zero", envHTTPReadHeaderTimeout)
 	}
@@ -314,7 +307,6 @@ func loadVars(lookup func(string) (string, bool)) (map[string]string, error) {
 		envHTTPReadHeaderTimeout,
 		envBackendBaseURL,
 		envBackendTimeout,
-		envGrantHeaderName,
 		envLogLevel,
 		envSSHPrivateKeyPath,
 		envSSHPublicKeyPath,

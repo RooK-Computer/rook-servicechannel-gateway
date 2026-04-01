@@ -1,6 +1,6 @@
 # Plan 02 - Browser-WebSocket und Sitzungssteuerung
 
-Status: Umgesetzt, wartet auf Review
+Status: Reviewed/abgenommen, spaeter durch Plan 06 fachlich teilweise ueberholt
 
 Zuletzt aktualisiert: 2026-04-01
 
@@ -10,7 +10,7 @@ Die Browser-seitige Echtzeitverbindung soll fachlich korrekt angenommen und als 
 
 ## Abhaengigkeit
 
-Plan 01 ist umgesetzt; die Umsetzung von Plan 02 ist auf dieser Basis erfolgt und wartet jetzt auf Review.
+Plan 01 ist umgesetzt; Plan 02 ist auf dieser Basis umgesetzt und reviewed/abgenommen. Der technisch eingefuehrte Header-Autorisierungspfad wird spaeter in Plan 06 gezielt korrigiert.
 
 ## Eingaben und Referenzen
 
@@ -115,17 +115,18 @@ Bei Umsetzung dieses Plans nachgezogen:
 * finale Session-Statusfelder im Code: Session-ID, Browser-State, Grant-Ergebnis inklusive Ziel-IP, Start-/Aktivitaets-/Endzeit und Abschlussgrund
 * initiale Queue-Groesse: 16 Nachrichten pro Sitzung
 * beschlossene Protokollaenderung: Header-Handshake ist alleinige Autorisierung, `authorize`/`authorized` sind entfernt
+* nach der ersten Integrationsvorbereitung wurde klar, dass Browser-WebSocket-APIs die benoetigte Header-Uebergabe nicht sauber abbilden; die Autorisierungsentscheidung aus diesem Plan wird daher gezielt in Plan 06 korrigiert
 
 ## Offene Punkte
 
 * Welche WebSocket-Close-Codes final langfristig stabil bleiben sollen
 * Wie spaeter Heartbeats/Pings explizit modelliert werden muessen
-* Wie Plan 03 den Uebergang von Browser-Sitzung zu echter SSH-Bridge ohne zusaetzliche Initialnachricht am saubersten andockt
+* Wie der Vorautorisierungszustand aus Folgeplan 06 sauber in das bestehende Sitzungsmodell eingezogen wird
 
 ## Naechste Uebergabe
 
 Nach Abschluss dieses Plans:
 
-1. Status in `plans/README.md` und in diesem Dokument aktualisieren.
-2. Die konzeptionelle Protokollaenderung auch im `spec`-Submodul nachziehen, damit Backend- und Gateway-Team dieselben Annahmen nutzen.
-3. Danach stoppen und Review abwarten.
+1. Historischen Stand dieses Plans beibehalten, aber die spaeter erkannte Unbrauchbarkeit der Header-Autorisierung fuer echte Browser-Clients in Plan 06 dokumentiert weiterfuehren.
+2. Die Ruecknahme der Header-Entscheidung nicht mehr hier, sondern gesammelt in Plan 06 und den betroffenen `spec`-Artefakten nachziehen.
+3. Danach am neuen Review-Gate fuer Plan 06 orientieren.

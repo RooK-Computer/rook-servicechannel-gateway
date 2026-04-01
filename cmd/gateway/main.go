@@ -31,7 +31,6 @@ func run() error {
 		"listenAddress", cfg.HTTP.ListenAddress,
 		"httpReadHeaderTimeout", cfg.HTTP.ReadHeaderTimeout,
 		"backendBaseURL", cfg.Backend.BaseURL,
-		"grantHeaderName", cfg.HTTP.GrantHeaderName,
 		"sshUsername", cfg.SSH.Username,
 		"sshPort", cfg.SSH.Port,
 		"sshInsecureIgnoreHostKey", cfg.SSH.InsecureIgnoreHostKey,

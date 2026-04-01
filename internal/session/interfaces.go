@@ -17,12 +17,13 @@ type Manager interface {
 }
 
 type StartRequest struct {
-	Grant       grants.ValidationResult
-	Browser     gatewayws.Connection
-	Bridge      sshbridge.Bridge
-	SSHAccount  string
-	Logger      *slog.Logger
-	CleanupHook CleanupHook
+	Grant           grants.ValidationResult
+	Browser         gatewayws.Connection
+	Bridge          sshbridge.Bridge
+	SSHAccount      string
+	Logger          *slog.Logger
+	InitialMessages []gatewayws.Message
+	CleanupHook     CleanupHook
 }
 
 type CleanupHook func(context.Context, Snapshot)

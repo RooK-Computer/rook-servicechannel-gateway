@@ -12,11 +12,13 @@ import (
 type MessageType string
 
 const (
-	MessageTypeInput  MessageType = "input"
-	MessageTypeOutput MessageType = "output"
-	MessageTypeResize MessageType = "resize"
-	MessageTypeError  MessageType = "error"
-	MessageTypeClose  MessageType = "close"
+	MessageTypeAuthorize  MessageType = "authorize"
+	MessageTypeAuthorized MessageType = "authorized"
+	MessageTypeInput      MessageType = "input"
+	MessageTypeOutput     MessageType = "output"
+	MessageTypeResize     MessageType = "resize"
+	MessageTypeError      MessageType = "error"
+	MessageTypeClose      MessageType = "close"
 )
 
 type ProtocolError struct {
@@ -30,6 +32,7 @@ func (e *ProtocolError) Error() string {
 
 type ClientMessage struct {
 	Type       MessageType
+	Token      string
 	Input      string
 	BinaryData []byte
 	Rows       int
@@ -44,6 +47,11 @@ type controlMessage struct {
 type inputMessage struct {
 	Type string `json:"type"`
 	Data string `json:"data"`
+}
+
+type authorizeMessage struct {
+	Type  string `json:"type"`
+	Token string `json:"token"`
 }
 
 type outputMessage struct {
@@ -79,6 +87,16 @@ func ParseClientMessage(message Message) (ClientMessage, error) {
 	}
 
 	switch MessageType(strings.TrimSpace(base.Type)) {
+	case MessageTypeAuthorize:
+		var parsed authorizeMessage
+		if err := decodeStrict(message.Data, &parsed); err != nil {
+			return ClientMessage{}, &ProtocolError{Code: "invalid_authorize", Message: "authorize message is malformed"}
+		}
+		token := strings.TrimSpace(parsed.Token)
+		if token == "" {
+			return ClientMessage{}, &ProtocolError{Code: "invalid_authorize", Message: "authorize token must not be empty"}
+		}
+		return ClientMessage{Type: MessageTypeAuthorize, Token: token}, nil
 	case MessageTypeInput:
 		var parsed inputMessage
 		if err := decodeStrict(message.Data, &parsed); err != nil {
@@ -104,11 +122,16 @@ func ParseClientMessage(message Message) (ClientMessage, error) {
 		return ClientMessage{}, &ProtocolError{Code: "unexpected_output", Message: "output messages are server-to-client only"}
 	case MessageTypeError:
 		return ClientMessage{}, &ProtocolError{Code: "unexpected_error", Message: "error messages are server-to-client only"}
-	case "authorize", "authorized":
-		return ClientMessage{}, &ProtocolError{Code: "deprecated_authorization_message", Message: "authorization messages are not part of the active protocol; use the handshake header"}
+	case MessageTypeAuthorized:
+		return ClientMessage{}, &ProtocolError{Code: "unexpected_authorized", Message: "authorized messages are server-to-client only"}
 	default:
 		return ClientMessage{}, &ProtocolError{Code: "unknown_message_type", Message: "unsupported control message type"}
 	}
+}
+
+func NewServerAuthorized() Message {
+	payload := controlMessage{Type: string(MessageTypeAuthorized)}
+	return Message{Type: TextFrame, Data: mustJSON(payload)}
 }
 
 func NewServerOutput(data []byte) Message {

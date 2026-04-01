@@ -75,21 +75,6 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 			writeJSON(w, http.StatusUpgradeRequired, errorResponse{Code: "upgrade_required", Message: "websocket upgrade headers are required"})
 			return
 		}
-		token := strings.TrimSpace(r.Header.Get(cfg.HTTP.GrantHeaderName))
-		if token == "" {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "missing_grant_header", Message: "terminal grant header is required"})
-			return
-		}
-		if grantValidator == nil {
-			writeJSON(w, http.StatusBadGateway, errorResponse{Code: "grant_validator_unavailable", Message: "grant validation is not configured"})
-			return
-		}
-		validationResult, err := grantValidator.ValidateToken(r.Context(), token)
-		if err != nil {
-			status, payload := classifyGrantError(err)
-			writeJSON(w, status, payload)
-			return
-		}
 
 		browserConn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -98,28 +83,7 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 			}
 			return
 		}
-		handle, err := sessions.Start(context.Background(), session.StartRequest{Grant: validationResult, Browser: browserConn, Bridge: bridge, SSHAccount: cfg.SSH.Username, Logger: logger})
-		if err != nil {
-			if errors.Is(err, session.ErrSessionLimitReached) {
-				_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerError("session_limit_reached", "gateway session capacity exhausted"))
-				_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerClose(string(session.EndReasonSessionLimit)))
-				_ = browserConn.Close(gws.CloseTryAgainLater, string(session.EndReasonSessionLimit))
-				if logger != nil {
-					logger.Warn("session start rejected", "reason", session.EndReasonSessionLimit, "ipAddress", validationResult.IPAddress)
-				}
-				return
-			}
-			_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerError("ssh_bridge_failed", err.Error()))
-			_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerClose("session_start_failed"))
-			_ = browserConn.Close(gws.CloseInternalServerErr, "session start failed")
-			if logger != nil {
-				logger.Error("session start failed", "error", err)
-			}
-			return
-		}
-		if logger != nil {
-			logger.Info("browser websocket session started", "sessionID", handle.ID(), "ipAddress", validationResult.IPAddress)
-		}
+		go handleBrowserSocket(cfg, logger, browserConn, sessions, grantValidator, bridge)
 	})
 	return mux
 }
@@ -180,6 +144,114 @@ func classifyGrantError(err error) (int, errorResponse) {
 		return http.StatusBadGateway, errorResponse{Code: "backend_unreachable", Message: transportErr.Error()}
 	}
 	return http.StatusBadGateway, errorResponse{Code: "grant_validation_failed", Message: err.Error()}
+}
+
+func handleBrowserSocket(cfg config.Config, logger *slog.Logger, browserConn gatewayws.Connection, sessions *session.Registry, grantValidator grants.Validator, bridge sshbridge.Bridge) {
+	authorizeCtx, cancel := context.WithTimeout(context.Background(), cfg.Session.IdleTimeout)
+	defer cancel()
+
+	message, err := browserConn.ReadMessage(authorizeCtx)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			writeWebSocketFailure(browserConn, gws.ClosePolicyViolation, "authorize_timeout", "authorization message not received before timeout", string(session.EndReasonIdleTimeout))
+		case errors.Is(err, context.Canceled), gatewayws.IsPeerClosed(err):
+			_ = browserConn.Close(gws.CloseNormalClosure, string(session.EndReasonBrowserDisconnect))
+		default:
+			if logger != nil {
+				logger.Error("websocket authorize read failed", "error", err)
+			}
+			writeWebSocketFailure(browserConn, gws.CloseInternalServerErr, "websocket_read_failed", "failed to read authorization message", string(session.EndReasonInternalError))
+		}
+		return
+	}
+
+	parsed, err := gatewayws.ParseClientMessage(message)
+	if err != nil {
+		var protocolErr *gatewayws.ProtocolError
+		if errors.As(err, &protocolErr) {
+			writeWebSocketFailure(browserConn, gws.ClosePolicyViolation, protocolErr.Code, protocolErr.Message, string(session.EndReasonProtocolViolation))
+			return
+		}
+		writeWebSocketFailure(browserConn, gws.CloseInternalServerErr, "message_parsing_failed", "message parsing failed", string(session.EndReasonInternalError))
+		return
+	}
+
+	switch parsed.Type {
+	case gatewayws.MessageTypeClose:
+		reason := parsed.Reason
+		if reason == "" {
+			reason = string(session.EndReasonClientClose)
+		}
+		_ = browserConn.WriteMessage(context.Background(), gatewayws.NewServerClose(reason))
+		_ = browserConn.Close(gws.CloseNormalClosure, reason)
+		return
+	case gatewayws.MessageTypeAuthorize:
+	default:
+		writeWebSocketFailure(browserConn, gws.ClosePolicyViolation, "unexpected_first_message", "authorize must be the first client message", string(session.EndReasonProtocolViolation))
+		return
+	}
+
+	if grantValidator == nil {
+		writeWebSocketFailure(browserConn, gws.CloseInternalServerErr, "grant_validator_unavailable", "grant validation is not configured", string(session.EndReasonInternalError))
+		return
+	}
+
+	validationResult, err := grantValidator.ValidateToken(authorizeCtx, parsed.Token)
+	if err != nil {
+		closeCode, closeReason := classifyGrantClose(err)
+		payload := classifyGrantErrorPayload(err)
+		writeWebSocketFailure(browserConn, closeCode, payload.Code, payload.Message, closeReason)
+		return
+	}
+
+	handle, err := sessions.Start(context.Background(), session.StartRequest{
+		Grant:           validationResult,
+		Browser:         browserConn,
+		Bridge:          bridge,
+		SSHAccount:      cfg.SSH.Username,
+		Logger:          logger,
+		InitialMessages: []gatewayws.Message{gatewayws.NewServerAuthorized()},
+	})
+	if err != nil {
+		if errors.Is(err, session.ErrSessionLimitReached) {
+			writeWebSocketFailure(browserConn, gws.CloseTryAgainLater, "session_limit_reached", "gateway session capacity exhausted", string(session.EndReasonSessionLimit))
+			if logger != nil {
+				logger.Warn("session start rejected", "reason", session.EndReasonSessionLimit, "ipAddress", validationResult.IPAddress)
+			}
+			return
+		}
+		writeWebSocketFailure(browserConn, gws.CloseInternalServerErr, "ssh_bridge_failed", err.Error(), "session_start_failed")
+		if logger != nil {
+			logger.Error("session start failed", "error", err)
+		}
+		return
+	}
+	if logger != nil {
+		logger.Info("browser websocket session started", "sessionID", handle.ID(), "ipAddress", validationResult.IPAddress)
+	}
+}
+
+func classifyGrantErrorPayload(err error) errorResponse {
+	_, payload := classifyGrantError(err)
+	return payload
+}
+
+func classifyGrantClose(err error) (int, string) {
+	if grants.IsInvalidGrantError(err) {
+		return gws.ClosePolicyViolation, "authorization_failed"
+	}
+	return gws.CloseInternalServerErr, string(session.EndReasonInternalError)
+}
+
+func writeWebSocketFailure(conn gatewayws.Connection, closeCode int, errorCode, message, closeReason string) {
+	if errorCode != "" {
+		_ = conn.WriteMessage(context.Background(), gatewayws.NewServerError(errorCode, message))
+	}
+	if closeReason != "" {
+		_ = conn.WriteMessage(context.Background(), gatewayws.NewServerClose(closeReason))
+	}
+	_ = conn.Close(closeCode, closeReason)
 }
 
 func hasUpgradeHeaders(header http.Header) bool {

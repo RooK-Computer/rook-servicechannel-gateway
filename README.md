@@ -9,7 +9,7 @@ It is responsible for:
 * preparing the server-side path towards the target console, and
 * eventually bridging browser terminal traffic to the console.
 
-This repository is in the post-implementation phase. Plans 01-05 are implemented, and the current gateway plan series is complete.
+This repository is in the review phase for Plan 06. Plans 01-05 are implemented and reviewed; the gateway currently uses a browser-compatible WebSocket authorization message instead of a custom handshake header.
 
 ## Current scope
 
@@ -19,9 +19,9 @@ The current codebase provides:
 * explicit configuration loading via environment variables and an optional local config file,
 * structured startup logging,
 * `/healthz` and `/readyz` HTTP endpoints,
-* a real `GET /gateway/terminal` WebSocket handshake that validates the terminal grant before upgrading,
+* a real `GET /gateway/terminal` WebSocket handshake that upgrades first and then expects an initial `authorize` message carrying the terminal grant,
 * a central browser session registry with lifecycle tracking and cleanup hooks,
-* a strict control-message parser for `input`, `resize`, `error`, and `close`-related flows,
+* a strict control-message parser for `authorize`, `authorized`, `input`, `resize`, `error`, and `close`-related flows,
 * a server-side SSH and PTY bridge that connects the browser session to the console, and
 * repository-native tests that cover the mock-backed browser-to-SSH MVP path without requiring the final backend integration.
 
@@ -63,7 +63,6 @@ The service currently expects at least:
 Optional settings with defaults:
 
 * `GATEWAY_BACKEND_TIMEOUT` (default: `5s`)
-* `GATEWAY_GRANT_HEADER_NAME` (default: `X-Rook-Terminal-Grant`)
 * `GATEWAY_LOG_LEVEL` (default: `info`)
 * `GATEWAY_SSH_PRIVATE_KEY_PATH` (default: `secrets/gateway_ssh_ed25519`)
 * `GATEWAY_SSH_PUBLIC_KEY_PATH` (default: `secrets/gateway_ssh_ed25519.pub`)
@@ -119,7 +118,7 @@ curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8080/readyz
 ```
 
-At this stage `GET /gateway/terminal` performs a real WebSocket upgrade after validating the configured terminal-grant header against the backend and then opens a server-side SSH session to the target console. Authorization happens entirely in the handshake header; the active runtime protocol does not use `authorize` or `authorized` messages anymore.
+At this stage `GET /gateway/terminal` performs a real WebSocket upgrade without requiring a custom auth header. The browser must then send `{"type":"authorize","token":"..."}` as its first protocol message. After backend validation and successful SSH session setup, the gateway responds with `{"type":"authorized"}` and starts the terminal data flow.
 
 For the current MVP, host-key verification is intentionally bypassed because the console host keys are not yet distributable in a verifiable way. This is a known hardening gap that must be revisited in the next plan.
 
@@ -144,7 +143,7 @@ It uses:
 Covered paths currently include:
 
 * successful browser -> gateway -> SSH echo flow,
-* backend unavailable during handshake,
+* backend unavailable during `authorize`,
 * SSH connection failure after a valid grant, and
 * idle-session timeout handling.
 
@@ -240,4 +239,4 @@ The `spec/` submodule is the contract source for architecture and API expectatio
 
 ## Status and next step
 
-The current gateway plan series is complete. Remaining work, if any, should be handled as explicit follow-up tasks rather than as part of the original implementation sequence.
+The next action is to review the completed Plan 06 implementation before any further follow-up work starts.

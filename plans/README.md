@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Plan 05 reviewed/abgenommen
+Status: Plan 06 umgesetzt, wartet auf Review
 
 ## Ziel dieser Planmappe
 
@@ -13,6 +13,7 @@ Diese Planmappe zerlegt die Gateway-Umsetzung in reviewbare, fortsetzbare Arbeit
 3. `plans/03-ssh-bridge-und-terminaldatenpfad.md`
 4. `plans/04-hardening-betrieb-und-lieferfaehigkeit.md`
 5. `plans/05-nfpm-debian-paketierung-und-installationspfad.md`
+6. `plans/06-websocket-autorisierung-per-nachricht-statt-header.md`
 
 Wichtig: Nach Abschluss eines Plans wird gestoppt und auf menschliches Review gewartet. Der naechste Plan beginnt erst nach expliziter Freigabe.
 
@@ -62,19 +63,23 @@ secrets/
 | 03 | SSH-Bridge und Terminaldatenpfad | Reviewed/abgenommen | Plan 02 | Pflicht |
 | 04 | Hardening, Betrieb und Lieferfaehigkeit | Reviewed/abgenommen | Plan 03 | Pflicht |
 | 05 | nfpm-Debian-Paketierung und Installationspfad | Reviewed/abgenommen | Plan 04 | Pflicht |
+| 06 | WebSocket-Autorisierung per Nachricht statt Header | Umgesetzt, wartet auf Review | Plan 05 | Pflicht |
 
 ## Fortschrittspflege
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* Aktuell ist kein weiterer Plan in Arbeit; Plan 05 ist reviewed/abgenommen.
-* Die aktuelle Planserie fuer den Gateway ist damit vorerst fachlich abgeschlossen.
+* Plan 06 ist umgesetzt und wartet jetzt auf Review.
+* Der zuvor erkannte Browser-Blocker ist damit technisch adressiert:
+  * `GET /gateway/terminal` fuehrt jetzt zuerst das WebSocket-Upgrade aus.
+  * Der Browser uebergibt den Grant danach als erste `authorize`-Nachricht.
+  * Das Gateway bestaetigt erfolgreiche Autorisierung explizit mit `authorized`, bevor der normale Terminal-Datenpfad aktiv wird.
 * Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
   * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
   * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
   * Readiness prueft in Plan 01 nur lokale Runtime-/Konfigurationsbereitschaft, nicht die Live-Erreichbarkeit des Backends.
-  * `GET /gateway/terminal` fuehrt jetzt ein echtes WebSocket-Upgrade mit vorgelagerter Header-/Grant-Pruefung aus.
-  * Der Header-basierte Handshake ist der alleinige Autorisierungspfad; `authorize`/`authorized` wurden aus dem aktiven Browser-Gateway-Protokoll entfernt und im `spec`-Submodul nachgezogen.
+  * `GET /gateway/terminal` fuehrt jetzt ein echtes WebSocket-Upgrade ohne benutzerdefinierten Auth-Header aus.
+  * Die Browser-Autorisierung erfolgt ueber eine initiale `authorize`-Nachricht; erfolgreiche Freigabe wird mit `authorized` bestaetigt.
   * Sitzungen werden zentral verwaltet; Queue-Tiefe, Inaktivitaets-Timeout, Session-Limit und WebSocket-Message-Groesse sind jetzt konfigurierbar.
   * SSH-Bridge und PTY-Datenpfad sind jetzt produktiv angebunden.
   * Host-Key-Verifikation wird fuer den aktuellen MVP bewusst umgangen und muss in Plan 04 gezielt nachgehaertet werden.
@@ -83,5 +88,5 @@ Bei spaeterer Umsetzung hier nachziehen:
   * Plan 05 fuehrt die Debian-Paketierung mit `nfpm` ein, ohne die Laufzeitkonfiguration auf einen festen Installationsmodus zu verengen.
   * Das Debian-Paket installiert den Gateway, aktiviert oder startet den `systemd`-Dienst aber standardmaessig nicht.
   * Der Paketbuild ist so angelegt, dass er auf macOS ohne Debian-Toolchain gebaut und per Archivinspektion geprueft werden kann.
-  * Der Gateway-Track ist nach Review von Plan 05 vorerst abgeschlossen; verbleibende Themen sind Folgearbeiten ausserhalb dieser Planserie.
+  * Das Session-Limit zaehlt derzeit autorisierte SSH-gestuetzte Sitzungen; die kurze Vorautorisierungsphase vor `authorize` wird ausserhalb des Session-Registers abgewickelt.
 * `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

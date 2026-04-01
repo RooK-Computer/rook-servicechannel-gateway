@@ -85,8 +85,10 @@ func TestGatewayEndToEndWithMockBackendAndTestSSH(t *testing.T) {
 	server := httptest.NewServer(httpserver.NewHandler(cfg, silentLogger(), grants.NewClient(cfg.Backend.BaseURL, cfg.Backend.ValidationTimeout), bridge, nil))
 	defer server.Close()
 
-	conn := dialGateway(t, server.URL, "grant-123")
+	conn := dialGateway(t, server.URL)
 	defer conn.Close()
+
+	authorizeGateway(t, conn, "grant-123")
 
 	if err := conn.WriteJSON(map[string]any{"type": "input", "data": "hello e2e\n"}); err != nil {
 		t.Fatalf("WriteJSON() error = %v", err)
@@ -107,7 +109,7 @@ func TestGatewayEndToEndWithMockBackendAndTestSSH(t *testing.T) {
 	}
 }
 
-func TestGatewayHandshakeFailsWhenBackendUnavailable(t *testing.T) {
+func TestGatewayAuthorizeFailsWhenBackendUnavailable(t *testing.T) {
 	t.Parallel()
 
 	closedBaseURL := closedListenerBaseURL(t)
@@ -117,30 +119,24 @@ func TestGatewayHandshakeFailsWhenBackendUnavailable(t *testing.T) {
 	server := httptest.NewServer(httpserver.NewHandler(cfg, silentLogger(), grants.NewClient(cfg.Backend.BaseURL, cfg.Backend.ValidationTimeout), nil, nil))
 	defer server.Close()
 
-	request, err := http.NewRequest(http.MethodGet, server.URL+"/gateway/terminal", nil)
+	conn := dialGateway(t, server.URL)
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]string{"type": "authorize", "token": "grant-123"}); err != nil {
+		t.Fatalf("WriteJSON() error = %v", err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, payload, err := conn.ReadMessage()
 	if err != nil {
-		t.Fatalf("NewRequest() error = %v", err)
+		t.Fatalf("ReadMessage() error = %v", err)
 	}
-	request.Header.Set("Connection", "Upgrade")
-	request.Header.Set("Upgrade", "websocket")
-	request.Header.Set("X-Rook-Terminal-Grant", "grant-123")
-
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("Do() error = %v", err)
+	var message map[string]string
+	if err := json.Unmarshal(payload, &message); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusBadGateway {
-		t.Fatalf("unexpected status %d", response.StatusCode)
-	}
-
-	var payload map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("Decode() error = %v", err)
-	}
-	if payload["code"] != "backend_unreachable" {
-		t.Fatalf("unexpected payload %v", payload)
+	if message["type"] != "error" || message["code"] != "backend_unreachable" {
+		t.Fatalf("unexpected payload %v", message)
 	}
 }
 
@@ -153,8 +149,12 @@ func TestGatewayClosesWebsocketWhenSSHConnectionFails(t *testing.T) {
 	}))
 	defer backend.Close()
 
+	clientKey, _ := mustSigner(t)
+	clientKeyPath := writePrivateKey(t, clientKey)
+
 	cfg := testConfig()
 	cfg.Backend.BaseURL = backend.URL
+	cfg.Secrets.SSHPrivateKeyPath = clientKeyPath
 	cfg.SSH.Port = closedPort(t)
 
 	bridge, err := sshbridge.NewClient(cfg)
@@ -165,8 +165,12 @@ func TestGatewayClosesWebsocketWhenSSHConnectionFails(t *testing.T) {
 	server := httptest.NewServer(httpserver.NewHandler(cfg, silentLogger(), grants.NewClient(cfg.Backend.BaseURL, cfg.Backend.ValidationTimeout), bridge, nil))
 	defer server.Close()
 
-	conn := dialGateway(t, server.URL, "grant-123")
+	conn := dialGateway(t, server.URL)
 	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]string{"type": "authorize", "token": "grant-123"}); err != nil {
+		t.Fatalf("WriteJSON(authorize) error = %v", err)
+	}
 
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, payload, err := conn.ReadMessage()
@@ -229,8 +233,10 @@ func TestGatewayClosesIdleSession(t *testing.T) {
 	server := httptest.NewServer(httpserver.NewHandler(cfg, silentLogger(), grants.NewClient(cfg.Backend.BaseURL, cfg.Backend.ValidationTimeout), bridge, nil))
 	defer server.Close()
 
-	conn := dialGateway(t, server.URL, "grant-123")
+	conn := dialGateway(t, server.URL)
 	defer conn.Close()
+
+	authorizeGateway(t, conn, "grant-123")
 
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, payload, err := conn.ReadMessage()
@@ -251,7 +257,6 @@ func testConfig() config.Config {
 	return config.Config{
 		HTTP: config.HTTPConfig{
 			ListenAddress:     ":0",
-			GrantHeaderName:   "X-Rook-Terminal-Grant",
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		Backend: config.BackendConfig{
@@ -283,17 +288,39 @@ func silentLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func dialGateway(t *testing.T, baseURL, grant string) *gws.Conn {
+func dialGateway(t *testing.T, baseURL string) *gws.Conn {
 	t.Helper()
 
 	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/gateway/terminal"
-	conn, response, err := gws.DefaultDialer.Dial(wsURL, http.Header{
-		"X-Rook-Terminal-Grant": []string{grant},
-	})
+	conn, response, err := gws.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("Dial() error = %v (status %v)", err, response)
 	}
 	return conn
+}
+
+func authorizeGateway(t *testing.T, conn *gws.Conn, grant string) {
+	t.Helper()
+
+	if err := conn.WriteJSON(map[string]string{"type": "authorize", "token": grant}); err != nil {
+		t.Fatalf("WriteJSON(authorize) error = %v", err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	defer conn.SetReadDeadline(time.Time{})
+
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage() error = %v", err)
+	}
+
+	var message map[string]string
+	if err := json.Unmarshal(payload, &message); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if message["type"] != "authorized" {
+		t.Fatalf("unexpected authorize payload %v", message)
+	}
 }
 
 func closedListenerBaseURL(t *testing.T) string {

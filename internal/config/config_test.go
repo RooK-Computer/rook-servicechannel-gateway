@@ -26,7 +26,6 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 		envBackendBaseURL:           "https://backend.example.test",
 		envBackendTimeout:           "7s",
 		envLogLevel:                 "debug",
-		envGrantHeaderName:          "X-Test-Grant",
 		envSSHPort:                  "2022",
 		envSSHConnectTimeout:        "9s",
 		envSSHUsername:              "alice",
@@ -43,7 +42,7 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 	if cfg.HTTP.ListenAddress != ":8080" || cfg.HTTP.ReadHeaderTimeout != 6*time.Second || cfg.Backend.ValidationTimeout != 7*time.Second || cfg.Logging.Level != slog.LevelDebug {
 		t.Fatalf("unexpected config %#v", cfg)
 	}
-	if cfg.HTTP.GrantHeaderName != "X-Test-Grant" || cfg.Secrets.SSHPrivateKeyPath != defaultSSHPrivateKey {
+	if cfg.Secrets.SSHPrivateKeyPath != defaultSSHPrivateKey {
 		t.Fatalf("unexpected config %#v", cfg)
 	}
 	if cfg.SSH.Port != 2022 || cfg.SSH.ConnectTimeout != 9*time.Second || cfg.SSH.Username != "alice" || !cfg.SSH.InsecureIgnoreHostKey {
