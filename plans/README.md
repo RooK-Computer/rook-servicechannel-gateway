@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Plan 04 umgesetzt, wartet auf Review
+Status: Plan 05 umgesetzt, wartet auf Review
 
 ## Ziel dieser Planmappe
 
@@ -12,6 +12,7 @@ Diese Planmappe zerlegt die Gateway-Umsetzung in reviewbare, fortsetzbare Arbeit
 2. `plans/02-browser-websocket-und-sitzungssteuerung.md`
 3. `plans/03-ssh-bridge-und-terminaldatenpfad.md`
 4. `plans/04-hardening-betrieb-und-lieferfaehigkeit.md`
+5. `plans/05-nfpm-debian-paketierung-und-installationspfad.md`
 
 Wichtig: Nach Abschluss eines Plans wird gestoppt und auf menschliches Review gewartet. Der naechste Plan beginnt erst nach expliziter Freigabe.
 
@@ -59,14 +60,15 @@ secrets/
 | 01 | Runtime-Grundgeruest und Backend-Validierung | Reviewed/abgenommen | keine | Pflicht |
 | 02 | Browser-WebSocket und Sitzungssteuerung | Reviewed/abgenommen | Plan 01 | Pflicht |
 | 03 | SSH-Bridge und Terminaldatenpfad | Reviewed/abgenommen | Plan 02 | Pflicht |
-| 04 | Hardening, Betrieb und Lieferfaehigkeit | Im Review | Plan 03 | Pflicht |
+| 04 | Hardening, Betrieb und Lieferfaehigkeit | Reviewed/abgenommen | Plan 03 | Pflicht |
+| 05 | nfpm-Debian-Paketierung und Installationspfad | Im Review | Plan 04 | Pflicht |
 
 ## Fortschrittspflege
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* Aktuell ist kein weiterer Plan in Arbeit; Plan 04 wurde umgesetzt und haengt im Review.
-* Im Review haengt `plans/04-hardening-betrieb-und-lieferfaehigkeit.md`.
+* Aktuell ist kein weiterer Plan in Arbeit; Plan 05 wurde umgesetzt und haengt im Review.
+* Im Review haengt `plans/05-nfpm-debian-paketierung-und-installationspfad.md`.
 * Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
   * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
   * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
@@ -78,4 +80,7 @@ Bei spaeterer Umsetzung hier nachziehen:
   * Host-Key-Verifikation wird fuer den aktuellen MVP bewusst umgangen und muss in Plan 04 gezielt nachgehaertet werden.
   * Plan 04 setzt fuer Betriebs-Observability auf zaehlbare strukturierte Session- und Audit-Logs statt auf eine eigene Metrik-Schnittstelle.
   * Plan 04 liefert einen `systemd`-Pfad mit Beispiel-Environment und dokumentiertem lokalen `make verify`-/`make test-e2e`-Freigabepfad.
+  * Plan 05 fuehrt die Debian-Paketierung mit `nfpm` ein, ohne die Laufzeitkonfiguration auf einen festen Installationsmodus zu verengen.
+  * Das Debian-Paket installiert den Gateway, aktiviert oder startet den `systemd`-Dienst aber standardmaessig nicht.
+  * Der Paketbuild ist so angelegt, dass er auf macOS ohne Debian-Toolchain gebaut und per Archivinspektion geprueft werden kann.
 * `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

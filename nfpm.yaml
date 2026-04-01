@@ -1,0 +1,42 @@
+name: rook-servicechannel-gateway
+arch: ${PACKAGE_ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+release: ${RELEASE}
+section: net
+priority: optional
+maintainer: RooK Team <rook@example.invalid>
+description: |
+  Browser-facing terminal gateway for the RooK servicechannel.
+  The package installs the gateway binary, a systemd unit, and an example
+  environment file while keeping runtime configuration external.
+license: UNLICENSED
+depends:
+  - systemd
+  - adduser
+  - ca-certificates
+contents:
+  - src: dist/package/rook-servicechannel-gateway
+    dst: /usr/bin/rook-servicechannel-gateway
+    file_info:
+      mode: 0755
+  - src: deploy/systemd/rook-servicechannel-gateway.service
+    dst: /lib/systemd/system/rook-servicechannel-gateway.service
+    file_info:
+      mode: 0644
+  - dst: /etc/rook-servicechannel-gateway
+    type: dir
+    file_info:
+      mode: 0755
+  - src: deploy/systemd/gateway.env.example
+    dst: /etc/rook-servicechannel-gateway/gateway.env
+    type: config|noreplace
+    file_info:
+      mode: 0640
+scripts:
+  postinstall: packaging/nfpm/postinstall.sh
+  preremove: packaging/nfpm/preremove.sh
+  postremove: packaging/nfpm/postremove.sh
+deb:
+  compression: gzip

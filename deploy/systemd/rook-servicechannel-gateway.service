@@ -7,17 +7,15 @@ Wants=network-online.target
 Type=simple
 User=rook-gateway
 Group=rook-gateway
-WorkingDirectory=/opt/rook-servicechannel-gateway
 EnvironmentFile=/etc/rook-servicechannel-gateway/gateway.env
-ExecStart=/usr/local/bin/rook-servicechannel-gateway
+ExecStart=/usr/bin/rook-servicechannel-gateway
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/
-ReadWritePaths=/var/log/rook-servicechannel-gateway
+PrivateDevices=true
 
 [Install]
 WantedBy=multi-user.target

@@ -9,7 +9,7 @@ It is responsible for:
 * preparing the server-side path towards the target console, and
 * eventually bridging browser terminal traffic to the console.
 
-This repository is in the review phase after hardening. Plans 01-04 are implemented, and Plan 04 is currently waiting for review.
+This repository is in the review phase after packaging. Plans 01-05 are implemented, and Plan 05 is currently waiting for review.
 
 ## Current scope
 
@@ -25,9 +25,10 @@ The current codebase provides:
 * a server-side SSH and PTY bridge that connects the browser session to the console, and
 * repository-native tests that cover the mock-backed browser-to-SSH MVP path without requiring the final backend integration.
 
-The following are intentionally not implemented yet:
+The following are intentionally not fully closed yet:
 
-* production hardening and delivery assets.
+* real Debian install/runtime validation on a Debian development machine,
+* host-key verification hardening beyond the current MVP compromise.
 
 ## Repository structure
 
@@ -160,6 +161,11 @@ The repository now includes a first `systemd` delivery path:
 * unit file: `deploy/systemd/rook-servicechannel-gateway.service`
 * example environment file: `deploy/systemd/gateway.env.example`
 
+It also now includes an `nfpm`-based Debian packaging path:
+
+* package definition: `nfpm.yaml`
+* maintainer scripts: `packaging/nfpm/`
+
 The example environment file intentionally contains no secrets. For real deployment, move the private/public SSH key pair into an external secret store or secret mount and point:
 
 * `GATEWAY_SSH_PRIVATE_KEY_PATH`
@@ -174,6 +180,32 @@ Build and verify before rollout:
 ```bash
 make verify
 ```
+
+Build a Debian package:
+
+```bash
+make package
+```
+
+Inspect the generated package archive without installing it:
+
+```bash
+make package-inspect
+```
+
+By default the package architecture follows the local `go env GOARCH`. Override it when needed, for example:
+
+```bash
+make package PACKAGE_ARCH=amd64 PACKAGE_VERSION=0.1.0
+```
+
+The package installs the binary, the `systemd` unit, and an example environment file, but it **does not automatically enable or start** the service.
+
+Because this repository is often worked on from macOS, the packaging flow is designed so that:
+
+* package build works via `go run ... nfpm` without a local Debian toolchain,
+* package archive contents can be inspected locally via `ar` and `tar`,
+* real install/runtime validation on Debian can be done later by a teammate on a Debian machine.
 
 Basic runtime checks after start:
 
@@ -208,4 +240,4 @@ The `spec/` submodule is the contract source for architecture and API expectatio
 
 ## Status and next step
 
-The current action is to review the completed Plan 04 hardening work before any follow-up plan starts.
+The current action is to finish and review Plan 05 Debian packaging work before any follow-up plan starts.

@@ -1,8 +1,8 @@
 # Plan 04 - Hardening, Betrieb und Lieferfaehigkeit
 
-Status: Umgesetzt, wartet auf Review
+Status: Reviewed/abgenommen
 
-Zuletzt aktualisiert: 2026-04-01
+Zuletzt aktualisiert: 2026-04-01 (Review abgeschlossen)
 
 ## Ziel
 
@@ -144,6 +144,9 @@ Stand nach Umsetzung:
   * Audit ueber strukturierte Logger-Sink-Ereignisse
   * keine separate Metrik-Schnittstelle in diesem Plan
   * keine CI-Pipeline in diesem Plan; `make verify` ist der lokale Freigabepfad
+* Review-Ergebnis:
+  * keine uebernommenen Blocker aus dem Plan-04-Review
+  * die gemeldeten Hinweise zu `ReadOnlyPaths=/` und `Snapshot()` wurden geprueft und nicht als echte Defekte uebernommen
 
 ## Offene Punkte
 
@@ -158,4 +161,4 @@ Nach Abschluss dieses Plans:
 
 1. Review von Plan 04 durchfuehren.
 2. Rueckmeldungen in Code, README, Plan und `spec`-Statusdatei nachziehen.
-3. Danach wieder anhalten statt stillschweigend neue Arbeitspakete zu eroeffnen.
+3. Danach mit Plan 05 (`nfpm`-basierte Debian-Paketierung) fortfahren, sobald dessen Scope freigegeben ist.
