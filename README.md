@@ -70,10 +70,13 @@ Optional settings with defaults:
 * `GATEWAY_SSH_PORT` (default: `22`)
 * `GATEWAY_SSH_CONNECT_TIMEOUT` (default: `5s`)
 * `GATEWAY_SSH_INSECURE_IGNORE_HOST_KEY` (default: `true` for the current MVP)
-* `GATEWAY_SESSION_IDLE_TIMEOUT` (default: `2m`)
+* `GATEWAY_SESSION_AUTHORIZE_TIMEOUT` (default: `2m`)
+* `GATEWAY_SESSION_IDLE_TIMEOUT` (legacy fallback alias for `GATEWAY_SESSION_AUTHORIZE_TIMEOUT`)
 * `GATEWAY_SESSION_MAX_CONCURRENT` (default: `32`)
 * `GATEWAY_SESSION_OUTBOUND_QUEUE_DEPTH` (default: `16`)
 * `GATEWAY_WEBSOCKET_MAX_MESSAGE_BYTES` (default: `65536`)
+* `GATEWAY_WEBSOCKET_KEEPALIVE_INTERVAL` (default: `30s`)
+* `GATEWAY_WEBSOCKET_KEEPALIVE_TIMEOUT` (default: `75s`)
 
 For local development you can also point `GATEWAY_CONFIG_FILE` to a simple `KEY=VALUE` file. Environment variables override values from that file.
 
@@ -217,7 +220,8 @@ Typical failure indicators:
 
 * `backend_unreachable` means grant validation could not reach the backend.
 * `ssh_bridge_failed` means the grant was valid but the server-side SSH session could not be opened.
-* `idle_timeout` means the browser session stayed inactive longer than the configured session timeout.
+* `authorize_timeout` means the browser opened the websocket but did not send the initial `authorize` message before the configured authorization timeout.
+* `keepalive_timeout` means the websocket transport stopped answering server-side keepalive expectations.
 * `session_limit_reached` means the configured maximum number of concurrent sessions is exhausted.
 
 ## Planning and specifications

@@ -1,6 +1,6 @@
 # Gateway-Implementierungsplaene
 
-Status: Plan 06 umgesetzt, wartet auf Review
+Status: Plan 07 umgesetzt, wartet auf Review
 
 ## Ziel dieser Planmappe
 
@@ -14,6 +14,7 @@ Diese Planmappe zerlegt die Gateway-Umsetzung in reviewbare, fortsetzbare Arbeit
 4. `plans/04-hardening-betrieb-und-lieferfaehigkeit.md`
 5. `plans/05-nfpm-debian-paketierung-und-installationspfad.md`
 6. `plans/06-websocket-autorisierung-per-nachricht-statt-header.md`
+7. `plans/07-idle-keepalive-und-session-endgruende.md`
 
 Wichtig: Nach Abschluss eines Plans wird gestoppt und auf menschliches Review gewartet. Der naechste Plan beginnt erst nach expliziter Freigabe.
 
@@ -63,17 +64,23 @@ secrets/
 | 03 | SSH-Bridge und Terminaldatenpfad | Reviewed/abgenommen | Plan 02 | Pflicht |
 | 04 | Hardening, Betrieb und Lieferfaehigkeit | Reviewed/abgenommen | Plan 03 | Pflicht |
 | 05 | nfpm-Debian-Paketierung und Installationspfad | Reviewed/abgenommen | Plan 04 | Pflicht |
-| 06 | WebSocket-Autorisierung per Nachricht statt Header | Umgesetzt, wartet auf Review | Plan 05 | Pflicht |
+| 06 | WebSocket-Autorisierung per Nachricht statt Header | Reviewed/abgenommen | Plan 05 | Pflicht |
+| 07 | Idle, Keepalive und Session-Endgruende | Umgesetzt, wartet auf Review | Plan 06 | Pflicht |
 
 ## Fortschrittspflege
 
 Bei spaeterer Umsetzung hier nachziehen:
 
-* Plan 06 ist umgesetzt und wartet jetzt auf Review.
-* Der zuvor erkannte Browser-Blocker ist damit technisch adressiert:
+* Plan 06 ist reviewed/abgenommen; der zuvor erkannte Browser-Blocker ist damit technisch adressiert:
   * `GET /gateway/terminal` fuehrt jetzt zuerst das WebSocket-Upgrade aus.
   * Der Browser uebergibt den Grant danach als erste `authorize`-Nachricht.
   * Das Gateway bestaetigt erfolgreiche Autorisierung explizit mit `authorized`, bevor der normale Terminal-Datenpfad aktiv wird.
+* Plan 07 ist umgesetzt und wartet jetzt auf Review:
+  * autorisierte Browser-Terminal-Sitzungen enden nicht mehr allein wegen fehlender Eingaben oder ausbleibender Resize-Ereignisse.
+  * die Vorautorisierungsphase verwendet jetzt einen getrennten `authorize_timeout` statt das Laufzeitverhalten autorisierter Sitzungen ueber `idle_timeout` abzubrechen.
+  * das Gateway sendet jetzt serverseitige WebSocket-Keepalive-Pings; ausbleibende Antworten fuehren zu `keepalive_timeout`.
+  * `GATEWAY_SESSION_AUTHORIZE_TIMEOUT` ist jetzt der klare Konfigurationswert fuer die Vorautorisierungsphase; `GATEWAY_SESSION_IDLE_TIMEOUT` bleibt nur als Legacy-Fallback erhalten.
+  * Befund 6 zur uebergeordneten Support-Session wird weiter nur als externe Abhaengigkeit beobachtet; der direkte Umsetzungsschwerpunkt in diesem Repo lag bei Befund 4 und 5.
 * Bisherige Entscheidungen mit Auswirkung auf Folgeplaene:
   * HTTP-Runtime in Plan 01 mit Go-Standardbibliothek umgesetzt, ohne zusaetzlichen Router.
   * Konfiguration ueber Umgebungsvariablen plus optionale lokale `KEY=VALUE`-Datei fuer Entwicklung.
@@ -89,4 +96,5 @@ Bei spaeterer Umsetzung hier nachziehen:
   * Das Debian-Paket installiert den Gateway, aktiviert oder startet den `systemd`-Dienst aber standardmaessig nicht.
   * Der Paketbuild ist so angelegt, dass er auf macOS ohne Debian-Toolchain gebaut und per Archivinspektion geprueft werden kann.
   * Das Session-Limit zaehlt derzeit autorisierte SSH-gestuetzte Sitzungen; die kurze Vorautorisierungsphase vor `authorize` wird ausserhalb des Session-Registers abgewickelt.
+  * Aktive Browser-Terminal-Sitzungen werden aktuell nicht mehr ueber blosse Bedieninaktivitaet beendet; Transport-Idle wird stattdessen ueber WebSocket-Keepalive beobachtet.
 * `spec/implementation/05-browser-terminal-gateway-status.md` wurde fuer diesen Meilenstein nachgezogen.

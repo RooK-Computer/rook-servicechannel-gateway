@@ -13,38 +13,43 @@ import (
 )
 
 const (
-	envConfigFile               = "GATEWAY_CONFIG_FILE"
-	envListenAddress            = "GATEWAY_LISTEN_ADDRESS"
-	envHTTPReadHeaderTimeout    = "GATEWAY_HTTP_READ_HEADER_TIMEOUT"
-	envBackendBaseURL           = "GATEWAY_BACKEND_BASE_URL"
-	envBackendTimeout           = "GATEWAY_BACKEND_TIMEOUT"
-	envLogLevel                 = "GATEWAY_LOG_LEVEL"
-	envSSHPrivateKeyPath        = "GATEWAY_SSH_PRIVATE_KEY_PATH"
-	envSSHPublicKeyPath         = "GATEWAY_SSH_PUBLIC_KEY_PATH"
-	envSSHUsername              = "GATEWAY_SSH_USERNAME"
-	envSSHPort                  = "GATEWAY_SSH_PORT"
-	envSSHConnectTimeout        = "GATEWAY_SSH_CONNECT_TIMEOUT"
-	envSSHInsecureIgnoreHostKey = "GATEWAY_SSH_INSECURE_IGNORE_HOST_KEY"
-	envSessionIdleTimeout       = "GATEWAY_SESSION_IDLE_TIMEOUT"
-	envSessionMaxConcurrent     = "GATEWAY_SESSION_MAX_CONCURRENT"
-	envSessionOutboundQueue     = "GATEWAY_SESSION_OUTBOUND_QUEUE_DEPTH"
-	envWebSocketMaxMessageBytes = "GATEWAY_WEBSOCKET_MAX_MESSAGE_BYTES"
+	envConfigFile                 = "GATEWAY_CONFIG_FILE"
+	envListenAddress              = "GATEWAY_LISTEN_ADDRESS"
+	envHTTPReadHeaderTimeout      = "GATEWAY_HTTP_READ_HEADER_TIMEOUT"
+	envBackendBaseURL             = "GATEWAY_BACKEND_BASE_URL"
+	envBackendTimeout             = "GATEWAY_BACKEND_TIMEOUT"
+	envLogLevel                   = "GATEWAY_LOG_LEVEL"
+	envSSHPrivateKeyPath          = "GATEWAY_SSH_PRIVATE_KEY_PATH"
+	envSSHPublicKeyPath           = "GATEWAY_SSH_PUBLIC_KEY_PATH"
+	envSSHUsername                = "GATEWAY_SSH_USERNAME"
+	envSSHPort                    = "GATEWAY_SSH_PORT"
+	envSSHConnectTimeout          = "GATEWAY_SSH_CONNECT_TIMEOUT"
+	envSSHInsecureIgnoreHostKey   = "GATEWAY_SSH_INSECURE_IGNORE_HOST_KEY"
+	envSessionAuthorizeTimeout    = "GATEWAY_SESSION_AUTHORIZE_TIMEOUT"
+	envSessionIdleTimeout         = "GATEWAY_SESSION_IDLE_TIMEOUT"
+	envSessionMaxConcurrent       = "GATEWAY_SESSION_MAX_CONCURRENT"
+	envSessionOutboundQueue       = "GATEWAY_SESSION_OUTBOUND_QUEUE_DEPTH"
+	envWebSocketMaxMessageBytes   = "GATEWAY_WEBSOCKET_MAX_MESSAGE_BYTES"
+	envWebSocketKeepaliveInterval = "GATEWAY_WEBSOCKET_KEEPALIVE_INTERVAL"
+	envWebSocketKeepaliveTimeout  = "GATEWAY_WEBSOCKET_KEEPALIVE_TIMEOUT"
 )
 
 const (
-	defaultHTTPReadHeaderTimeout    = 5 * time.Second
-	defaultBackendTimeout           = 5 * time.Second
-	defaultLogLevel                 = slog.LevelInfo
-	defaultSSHPrivateKey            = "secrets/gateway_ssh_ed25519"
-	defaultSSHPublicKey             = "secrets/gateway_ssh_ed25519.pub"
-	defaultSSHUsername              = "pi"
-	defaultSSHPort                  = 22
-	defaultSSHConnectTimeout        = 5 * time.Second
-	defaultSSHInsecureIgnoreHostKey = true
-	defaultSessionIdleTimeout       = 2 * time.Minute
-	defaultSessionMaxConcurrent     = 32
-	defaultSessionOutboundQueue     = 16
-	defaultWebSocketMaxMessageBytes = int64(64 * 1024)
+	defaultHTTPReadHeaderTimeout      = 5 * time.Second
+	defaultBackendTimeout             = 5 * time.Second
+	defaultLogLevel                   = slog.LevelInfo
+	defaultSSHPrivateKey              = "secrets/gateway_ssh_ed25519"
+	defaultSSHPublicKey               = "secrets/gateway_ssh_ed25519.pub"
+	defaultSSHUsername                = "pi"
+	defaultSSHPort                    = 22
+	defaultSSHConnectTimeout          = 5 * time.Second
+	defaultSSHInsecureIgnoreHostKey   = true
+	defaultSessionAuthorizeTimeout    = 2 * time.Minute
+	defaultSessionMaxConcurrent       = 32
+	defaultSessionOutboundQueue       = 16
+	defaultWebSocketMaxMessageBytes   = int64(64 * 1024)
+	defaultWebSocketKeepaliveInterval = 30 * time.Second
+	defaultWebSocketKeepaliveTimeout  = 75 * time.Second
 )
 
 type Config struct {
@@ -84,13 +89,15 @@ type SSHConfig struct {
 }
 
 type SessionConfig struct {
-	IdleTimeout        time.Duration
+	AuthorizeTimeout   time.Duration
 	MaxConcurrent      int
 	OutboundQueueDepth int
 }
 
 type WebSocketConfig struct {
-	MaxMessageBytes int64
+	MaxMessageBytes   int64
+	KeepaliveInterval time.Duration
+	KeepaliveTimeout  time.Duration
 }
 
 func Load() (Config, error) {
@@ -123,12 +130,14 @@ func Resolve(vars map[string]string) (Config, error) {
 			InsecureIgnoreHostKey: defaultSSHInsecureIgnoreHostKey,
 		},
 		Session: SessionConfig{
-			IdleTimeout:        defaultSessionIdleTimeout,
+			AuthorizeTimeout:   defaultSessionAuthorizeTimeout,
 			MaxConcurrent:      defaultSessionMaxConcurrent,
 			OutboundQueueDepth: defaultSessionOutboundQueue,
 		},
 		WebSocket: WebSocketConfig{
-			MaxMessageBytes: defaultWebSocketMaxMessageBytes,
+			MaxMessageBytes:   defaultWebSocketMaxMessageBytes,
+			KeepaliveInterval: defaultWebSocketKeepaliveInterval,
+			KeepaliveTimeout:  defaultWebSocketKeepaliveTimeout,
 		},
 	}
 
@@ -171,12 +180,16 @@ func Resolve(vars map[string]string) (Config, error) {
 		cfg.SSH.InsecureIgnoreHostKey = parsedBool
 	}
 
-	if idleTimeoutValue := strings.TrimSpace(vars[envSessionIdleTimeout]); idleTimeoutValue != "" {
-		parsedTimeout, err := time.ParseDuration(idleTimeoutValue)
+	authorizeTimeoutValue := strings.TrimSpace(vars[envSessionAuthorizeTimeout])
+	if authorizeTimeoutValue == "" {
+		authorizeTimeoutValue = strings.TrimSpace(vars[envSessionIdleTimeout])
+	}
+	if authorizeTimeoutValue != "" {
+		parsedTimeout, err := time.ParseDuration(authorizeTimeoutValue)
 		if err != nil {
-			return Config{}, fmt.Errorf("parse %s: %w", envSessionIdleTimeout, err)
+			return Config{}, fmt.Errorf("parse %s: %w", envSessionAuthorizeTimeout, err)
 		}
-		cfg.Session.IdleTimeout = parsedTimeout
+		cfg.Session.AuthorizeTimeout = parsedTimeout
 	}
 
 	if maxConcurrentValue := strings.TrimSpace(vars[envSessionMaxConcurrent]); maxConcurrentValue != "" {
@@ -201,6 +214,20 @@ func Resolve(vars map[string]string) (Config, error) {
 			return Config{}, fmt.Errorf("parse %s: %w", envWebSocketMaxMessageBytes, err)
 		}
 		cfg.WebSocket.MaxMessageBytes = parsedValue
+	}
+	if keepaliveIntervalValue := strings.TrimSpace(vars[envWebSocketKeepaliveInterval]); keepaliveIntervalValue != "" {
+		parsedValue, err := time.ParseDuration(keepaliveIntervalValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envWebSocketKeepaliveInterval, err)
+		}
+		cfg.WebSocket.KeepaliveInterval = parsedValue
+	}
+	if keepaliveTimeoutValue := strings.TrimSpace(vars[envWebSocketKeepaliveTimeout]); keepaliveTimeoutValue != "" {
+		parsedValue, err := time.ParseDuration(keepaliveTimeoutValue)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse %s: %w", envWebSocketKeepaliveTimeout, err)
+		}
+		cfg.WebSocket.KeepaliveTimeout = parsedValue
 	}
 
 	if levelValue := strings.TrimSpace(vars[envLogLevel]); levelValue != "" {
@@ -257,8 +284,8 @@ func (c Config) Validate() error {
 	if c.SSH.ConnectTimeout <= 0 {
 		return fmt.Errorf("%s must be greater than zero", envSSHConnectTimeout)
 	}
-	if c.Session.IdleTimeout <= 0 {
-		return fmt.Errorf("%s must be greater than zero", envSessionIdleTimeout)
+	if c.Session.AuthorizeTimeout <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envSessionAuthorizeTimeout)
 	}
 	if c.Session.MaxConcurrent <= 0 {
 		return fmt.Errorf("%s must be greater than zero", envSessionMaxConcurrent)
@@ -268,6 +295,15 @@ func (c Config) Validate() error {
 	}
 	if c.WebSocket.MaxMessageBytes <= 0 {
 		return fmt.Errorf("%s must be greater than zero", envWebSocketMaxMessageBytes)
+	}
+	if c.WebSocket.KeepaliveInterval <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envWebSocketKeepaliveInterval)
+	}
+	if c.WebSocket.KeepaliveTimeout <= 0 {
+		return fmt.Errorf("%s must be greater than zero", envWebSocketKeepaliveTimeout)
+	}
+	if c.WebSocket.KeepaliveTimeout <= c.WebSocket.KeepaliveInterval {
+		return fmt.Errorf("%s must be greater than %s", envWebSocketKeepaliveTimeout, envWebSocketKeepaliveInterval)
 	}
 	return nil
 }
@@ -314,10 +350,13 @@ func loadVars(lookup func(string) (string, bool)) (map[string]string, error) {
 		envSSHPort,
 		envSSHConnectTimeout,
 		envSSHInsecureIgnoreHostKey,
+		envSessionAuthorizeTimeout,
 		envSessionIdleTimeout,
 		envSessionMaxConcurrent,
 		envSessionOutboundQueue,
 		envWebSocketMaxMessageBytes,
+		envWebSocketKeepaliveInterval,
+		envWebSocketKeepaliveTimeout,
 	} {
 		if value, ok := lookup(key); ok {
 			vars[key] = value

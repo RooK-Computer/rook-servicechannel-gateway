@@ -21,19 +21,21 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Resolve(map[string]string{
-		envListenAddress:            ":8080",
-		envHTTPReadHeaderTimeout:    "6s",
-		envBackendBaseURL:           "https://backend.example.test",
-		envBackendTimeout:           "7s",
-		envLogLevel:                 "debug",
-		envSSHPort:                  "2022",
-		envSSHConnectTimeout:        "9s",
-		envSSHUsername:              "alice",
-		envSSHInsecureIgnoreHostKey: "true",
-		envSessionIdleTimeout:       "45s",
-		envSessionMaxConcurrent:     "5",
-		envSessionOutboundQueue:     "24",
-		envWebSocketMaxMessageBytes: "131072",
+		envListenAddress:              ":8080",
+		envHTTPReadHeaderTimeout:      "6s",
+		envBackendBaseURL:             "https://backend.example.test",
+		envBackendTimeout:             "7s",
+		envLogLevel:                   "debug",
+		envSSHPort:                    "2022",
+		envSSHConnectTimeout:          "9s",
+		envSSHUsername:                "alice",
+		envSSHInsecureIgnoreHostKey:   "true",
+		envSessionAuthorizeTimeout:    "45s",
+		envSessionMaxConcurrent:       "5",
+		envSessionOutboundQueue:       "24",
+		envWebSocketMaxMessageBytes:   "131072",
+		envWebSocketKeepaliveInterval: "11s",
+		envWebSocketKeepaliveTimeout:  "25s",
 	})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
@@ -48,10 +50,10 @@ func TestResolveAppliesDefaultsAndOverrides(t *testing.T) {
 	if cfg.SSH.Port != 2022 || cfg.SSH.ConnectTimeout != 9*time.Second || cfg.SSH.Username != "alice" || !cfg.SSH.InsecureIgnoreHostKey {
 		t.Fatalf("unexpected ssh config %#v", cfg.SSH)
 	}
-	if cfg.Session.IdleTimeout != 45*time.Second || cfg.Session.MaxConcurrent != 5 || cfg.Session.OutboundQueueDepth != 24 {
+	if cfg.Session.AuthorizeTimeout != 45*time.Second || cfg.Session.MaxConcurrent != 5 || cfg.Session.OutboundQueueDepth != 24 {
 		t.Fatalf("unexpected session config %#v", cfg.Session)
 	}
-	if cfg.WebSocket.MaxMessageBytes != 131072 {
+	if cfg.WebSocket.MaxMessageBytes != 131072 || cfg.WebSocket.KeepaliveInterval != 11*time.Second || cfg.WebSocket.KeepaliveTimeout != 25*time.Second {
 		t.Fatalf("unexpected websocket config %#v", cfg.WebSocket)
 	}
 }
@@ -100,5 +102,21 @@ func TestResolveRejectsInvalidSessionLimit(t *testing.T) {
 	})
 	if err == nil || err.Error() != envSessionMaxConcurrent+" must be greater than zero" {
 		t.Fatalf("expected session max concurrent validation error, got %v", err)
+	}
+}
+
+func TestResolveUsesLegacySessionIdleTimeoutAsAuthorizeTimeoutFallback(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Resolve(map[string]string{
+		envListenAddress:      ":8080",
+		envBackendBaseURL:     "https://backend.example.test",
+		envSessionIdleTimeout: "33s",
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if cfg.Session.AuthorizeTimeout != 33*time.Second {
+		t.Fatalf("expected legacy idle timeout fallback, got %#v", cfg.Session)
 	}
 }

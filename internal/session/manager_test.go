@@ -21,6 +21,8 @@ type mockBrowser struct {
 	writeBlock  chan struct{}
 	writeMu     sync.Mutex
 	writes      []gatewayws.Message
+	pingCount   int
+	pingErr     error
 	closeCount  int
 	closeCode   int
 	closeReason string
@@ -81,6 +83,17 @@ func (m *mockBrowser) WriteMessage(_ context.Context, message gatewayws.Message)
 	m.writeMu.Lock()
 	defer m.writeMu.Unlock()
 	m.writes = append(m.writes, message)
+	return nil
+}
+
+func (m *mockBrowser) WritePing(context.Context) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	m.pingCount++
+	return m.pingErr
+}
+
+func (m *mockBrowser) ConfigureKeepalive(time.Duration) error {
 	return nil
 }
 
@@ -459,10 +472,10 @@ func TestConsoleOutputGetsQueuedForBrowser(t *testing.T) {
 	}
 }
 
-func TestIdleTimeoutClosesSession(t *testing.T) {
+func TestSessionDoesNotCloseOnlyBecauseBrowserIsIdle(t *testing.T) {
 	t.Parallel()
 
-	registry := NewRegistry(testLogger(), RegistryConfig{IdleTimeout: 80 * time.Millisecond})
+	registry := NewRegistry(testLogger(), RegistryConfig{KeepaliveInterval: time.Second, KeepaliveTimeout: 2 * time.Second})
 	browser := newMockBrowser()
 	console := newStubConsole()
 
@@ -477,21 +490,18 @@ func TestIdleTimeoutClosesSession(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(200 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		browser.writeMu.Lock()
 		closed := browser.closeCount > 0
-		reason := browser.closeReason
 		browser.writeMu.Unlock()
 		if closed {
-			if reason != string(EndReasonIdleTimeout) {
-				t.Fatalf("unexpected close reason %q", reason)
-			}
-			return
+			t.Fatalf("session closed unexpectedly")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("expected idle timeout to close session")
+
+	browser.push(gatewayws.Message{Type: gatewayws.TextFrame, Data: []byte(`{"type":"close"}`)})
 }
 
 func TestStartRejectsWhenSessionLimitReached(t *testing.T) {

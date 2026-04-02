@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
@@ -22,7 +23,8 @@ import (
 
 const (
 	defaultOutboundQueueSize = 16
-	defaultIdleTimeout       = 2 * time.Minute
+	defaultKeepaliveInterval = 30 * time.Second
+	defaultKeepaliveTimeout  = 75 * time.Second
 	defaultMaxConcurrent     = 32
 	outboundQueueSize        = defaultOutboundQueueSize
 )
@@ -37,25 +39,24 @@ type Registry struct {
 }
 
 type Session struct {
-	id          string
-	grant       grants.ValidationResult
-	sshAccount  string
-	browser     gatewayws.Connection
-	console     sshbridge.Session
-	logger      *slog.Logger
-	auditSink   audit.Sink
-	cleanup     CleanupHook
-	manager     *Registry
-	outbound    chan gatewayws.Message
-	closed      chan struct{}
-	closeOnce   sync.Once
-	idleTimeout time.Duration
-	stateMu     sync.RWMutex
-	state       BrowserState
-	startedAt   time.Time
-	lastActive  time.Time
-	endedAt     time.Time
-	endReason   EndReason
+	id         string
+	grant      grants.ValidationResult
+	sshAccount string
+	browser    gatewayws.Connection
+	console    sshbridge.Session
+	logger     *slog.Logger
+	auditSink  audit.Sink
+	cleanup    CleanupHook
+	manager    *Registry
+	outbound   chan gatewayws.Message
+	closed     chan struct{}
+	closeOnce  sync.Once
+	stateMu    sync.RWMutex
+	state      BrowserState
+	startedAt  time.Time
+	lastActive time.Time
+	endedAt    time.Time
+	endReason  EndReason
 }
 
 type loopResult struct {
@@ -73,13 +74,17 @@ func NewRegistry(logger *slog.Logger, configs ...RegistryConfig) *Registry {
 	}
 
 	cfg := RegistryConfig{
-		IdleTimeout:        defaultIdleTimeout,
+		KeepaliveInterval:  defaultKeepaliveInterval,
+		KeepaliveTimeout:   defaultKeepaliveTimeout,
 		MaxConcurrent:      defaultMaxConcurrent,
 		OutboundQueueDepth: defaultOutboundQueueSize,
 	}
 	if len(configs) > 0 {
-		if configs[0].IdleTimeout > 0 {
-			cfg.IdleTimeout = configs[0].IdleTimeout
+		if configs[0].KeepaliveInterval > 0 {
+			cfg.KeepaliveInterval = configs[0].KeepaliveInterval
+		}
+		if configs[0].KeepaliveTimeout > 0 {
+			cfg.KeepaliveTimeout = configs[0].KeepaliveTimeout
 		}
 		if configs[0].MaxConcurrent > 0 {
 			cfg.MaxConcurrent = configs[0].MaxConcurrent
@@ -126,24 +131,27 @@ func (r *Registry) Start(ctx context.Context, request StartRequest) (Handle, err
 
 	now := time.Now().UTC()
 	session := &Session{
-		id:          newSessionID(),
-		grant:       request.Grant,
-		sshAccount:  request.SSHAccount,
-		browser:     request.Browser,
-		console:     console,
-		logger:      request.Logger,
-		auditSink:   r.cfg.AuditSink,
-		cleanup:     request.CleanupHook,
-		manager:     r,
-		outbound:    make(chan gatewayws.Message, r.cfg.OutboundQueueDepth),
-		closed:      make(chan struct{}),
-		idleTimeout: r.cfg.IdleTimeout,
-		state:       BrowserStateActive,
-		startedAt:   now,
-		lastActive:  now,
+		id:         newSessionID(),
+		grant:      request.Grant,
+		sshAccount: request.SSHAccount,
+		browser:    request.Browser,
+		console:    console,
+		logger:     request.Logger,
+		auditSink:  r.cfg.AuditSink,
+		cleanup:    request.CleanupHook,
+		manager:    r,
+		outbound:   make(chan gatewayws.Message, r.cfg.OutboundQueueDepth),
+		closed:     make(chan struct{}),
+		state:      BrowserStateActive,
+		startedAt:  now,
+		lastActive: now,
 	}
 	if session.logger == nil {
 		session.logger = r.logger
+	}
+	if err := session.browser.ConfigureKeepalive(r.cfg.KeepaliveTimeout); err != nil {
+		_ = console.Close()
+		return nil, fmt.Errorf("configure websocket keepalive: %w", err)
 	}
 
 	r.mu.Lock()
@@ -164,7 +172,8 @@ func (r *Registry) Start(ctx context.Context, request StartRequest) (Handle, err
 	session.recordAuditEvent(context.Background(), "session_started", map[string]string{
 		"ipAddress":             session.grant.IPAddress,
 		"sshAccount":            session.sshAccount,
-		"idleTimeout":           session.idleTimeout.String(),
+		"keepaliveInterval":     r.cfg.KeepaliveInterval.String(),
+		"keepaliveTimeout":      r.cfg.KeepaliveTimeout.String(),
 		"outboundQueueDepth":    fmt.Sprintf("%d", cap(session.outbound)),
 		"maxConcurrentSessions": fmt.Sprintf("%d", r.cfg.MaxConcurrent),
 	})
@@ -256,11 +265,7 @@ func (s *Session) run(ctx context.Context) {
 	go s.writeLoop(ctx, writeDone)
 	go func() { results <- s.outputLoop() }()
 	go func() { results <- s.readLoop(ctx) }()
-	go func() {
-		if result, ok := s.idleLoop(ctx); ok {
-			results <- result
-		}
-	}()
+	go s.keepaliveLoop(ctx, results)
 
 	result := <-results
 	result.flush(context.Background(), s)
@@ -274,6 +279,10 @@ func (s *Session) readLoop(ctx context.Context) loopResult {
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return serverShutdownResult()
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return keepaliveTimeoutResult()
 			}
 			if gatewayws.IsPeerClosed(err) {
 				return browserDisconnectResult()
@@ -346,13 +355,10 @@ func (s *Session) outputLoop() loopResult {
 	}
 }
 
-func (s *Session) idleLoop(ctx context.Context) (loopResult, bool) {
-	interval := s.idleTimeout / 4
-	if interval < 50*time.Millisecond {
-		interval = 50 * time.Millisecond
-	}
-	if interval > time.Second {
-		interval = time.Second
+func (s *Session) keepaliveLoop(ctx context.Context, results chan<- loopResult) {
+	interval := s.manager.cfg.KeepaliveInterval
+	if interval <= 0 {
+		return
 	}
 
 	ticker := time.NewTicker(interval)
@@ -361,15 +367,20 @@ func (s *Session) idleLoop(ctx context.Context) (loopResult, bool) {
 	for {
 		select {
 		case <-ctx.Done():
-			return serverShutdownResult(), true
+			return
 		case <-s.closed:
-			return loopResult{}, false
+			return
 		case <-ticker.C:
-			s.stateMu.RLock()
-			lastActive := s.lastActive
-			s.stateMu.RUnlock()
-			if time.Since(lastActive) >= s.idleTimeout {
-				return idleTimeoutResult(s.idleTimeout), true
+			if err := s.browser.WritePing(ctx); err != nil {
+				if gatewayws.IsPeerClosed(err) {
+					results <- browserDisconnectResult()
+					return
+				}
+				if s.logger != nil {
+					s.logger.Warn("websocket keepalive ping failed", "sessionID", s.id, "error", err)
+				}
+				results <- internalErrorResult("keepalive_ping_failed", "failed to write websocket keepalive ping")
+				return
 			}
 		}
 	}
@@ -450,7 +461,8 @@ func (s *Session) logStart() {
 		"sessionID", s.id,
 		"ipAddress", s.grant.IPAddress,
 		"sshAccount", s.sshAccount,
-		"idleTimeout", s.idleTimeout.String(),
+		"keepaliveInterval", s.manager.cfg.KeepaliveInterval.String(),
+		"keepaliveTimeout", s.manager.cfg.KeepaliveTimeout.String(),
 		"outboundQueueDepth", cap(s.outbound),
 	)
 }
@@ -474,7 +486,7 @@ func (s *Session) logEnd(closeCode int, closeReason string) {
 	switch s.endReason {
 	case EndReasonInternalError, EndReasonSSHError:
 		s.logger.Error("session ended", args...)
-	case EndReasonProtocolViolation, EndReasonSlowClient, EndReasonIdleTimeout, EndReasonSessionLimit:
+	case EndReasonProtocolViolation, EndReasonSlowClient, EndReasonAuthorizeTimeout, EndReasonKeepaliveTimeout, EndReasonSessionLimit:
 		s.logger.Warn("session ended", args...)
 	default:
 		s.logger.Info("session ended", args...)
@@ -588,14 +600,11 @@ func clientCloseResult(reason string) loopResult {
 	}
 }
 
-func idleTimeoutResult(timeout time.Duration) loopResult {
+func keepaliveTimeoutResult() loopResult {
 	return loopResult{
-		reason:            EndReasonIdleTimeout,
-		closeCode:         gws.ClosePolicyViolation,
-		closeReason:       string(EndReasonIdleTimeout),
-		clientErrorCode:   "idle_timeout",
-		clientErrorText:   fmt.Sprintf("session inactive for %s", timeout),
-		clientCloseReason: string(EndReasonIdleTimeout),
+		reason:      EndReasonKeepaliveTimeout,
+		closeCode:   gws.CloseGoingAway,
+		closeReason: string(EndReasonKeepaliveTimeout),
 	}
 }
 

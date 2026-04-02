@@ -187,7 +187,7 @@ func TestGatewayClosesWebsocketWhenSSHConnectionFails(t *testing.T) {
 	}
 }
 
-func TestGatewayClosesIdleSession(t *testing.T) {
+func TestGatewayKeepsAuthorizedSessionOpenWhileIdle(t *testing.T) {
 	t.Parallel()
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -203,8 +203,16 @@ func TestGatewayClosesIdleSession(t *testing.T) {
 
 	sshServer := &testssh.Server{
 		Handler: func(sess testssh.Session) {
-			_, _, _ = sess.Pty()
-			select {}
+			buffer := make([]byte, 1024)
+			for {
+				count, err := sess.Read(buffer)
+				if count > 0 {
+					_, _ = sess.Write(buffer[:count])
+				}
+				if err != nil {
+					return
+				}
+			}
 		},
 		PublicKeyHandler: func(_ testssh.Context, key testssh.PublicKey) bool {
 			return string(key.Marshal()) == string(authorizedKey.Marshal())
@@ -223,7 +231,8 @@ func TestGatewayClosesIdleSession(t *testing.T) {
 	cfg.Backend.BaseURL = backend.URL
 	cfg.Secrets.SSHPrivateKeyPath = clientKeyPath
 	cfg.SSH.Port = portFromAddr(t, listener.Addr().String())
-	cfg.Session.IdleTimeout = 150 * time.Millisecond
+	cfg.WebSocket.KeepaliveInterval = 50 * time.Millisecond
+	cfg.WebSocket.KeepaliveTimeout = 140 * time.Millisecond
 
 	bridge, err := sshbridge.NewClient(cfg)
 	if err != nil {
@@ -237,19 +246,40 @@ func TestGatewayClosesIdleSession(t *testing.T) {
 	defer conn.Close()
 
 	authorizeGateway(t, conn, "grant-123")
+	messages := make(chan []byte, 1)
+	readErrs := make(chan error, 1)
+	go func() {
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				readErrs <- err
+				return
+			}
+			messages <- payload
+			return
+		}
+	}()
+	time.Sleep(220 * time.Millisecond)
 
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, payload, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage() error = %v", err)
+	if err := conn.WriteJSON(map[string]any{"type": "input", "data": "still there\n"}); err != nil {
+		t.Fatalf("WriteJSON() error = %v", err)
 	}
 
-	var message map[string]string
-	if err := json.Unmarshal(payload, &message); err != nil {
+	var payload []byte
+	select {
+	case err := <-readErrs:
+		t.Fatalf("ReadMessage() error = %v", err)
+	case payload = <-messages:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for websocket output")
+	}
+
+	var output map[string]string
+	if err := json.Unmarshal(payload, &output); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if message["type"] != "error" || message["code"] != "idle_timeout" {
-		t.Fatalf("unexpected payload %v", message)
+	if output["type"] != "output" || !strings.Contains(output["data"], "still there") {
+		t.Fatalf("unexpected payload %v", output)
 	}
 }
 
@@ -274,12 +304,14 @@ func testConfig() config.Config {
 			InsecureIgnoreHostKey: true,
 		},
 		Session: config.SessionConfig{
-			IdleTimeout:        2 * time.Second,
+			AuthorizeTimeout:   2 * time.Second,
 			MaxConcurrent:      8,
 			OutboundQueueDepth: 16,
 		},
 		WebSocket: config.WebSocketConfig{
-			MaxMessageBytes: 64 * 1024,
+			MaxMessageBytes:   64 * 1024,
+			KeepaliveInterval: 30 * time.Second,
+			KeepaliveTimeout:  75 * time.Second,
 		},
 	}
 }

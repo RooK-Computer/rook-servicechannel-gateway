@@ -1,8 +1,8 @@
 # Plan 06 - WebSocket-Autorisierung per Nachricht statt Header
 
-Status: Umgesetzt, wartet auf Review
+Status: Reviewed/abgenommen
 
-Zuletzt aktualisiert: 2026-04-01
+Zuletzt aktualisiert: 2026-04-02
 
 ## Ziel
 
@@ -129,6 +129,6 @@ Bei Umsetzung dieses Plans nachziehen:
 
 Nach Abschluss dieses Plans:
 
-1. Review von Plan 06 durchfuehren.
-2. Rueckmeldungen konsistent in Code, README, Repo-Plaenen und `spec`-Artefakten nachziehen.
-3. Danach stoppen und erst nach expliziter Freigabe den naechsten Folgeplan beginnen.
+1. Rueckmeldungen aus dem ersten echten Browser-Integrationslauf gesammelt in Plan 07 weiterfuehren.
+2. Idle-, Keepalive- und Session-Endgrund-Semantik nicht mehr hier, sondern im Folgeplan `plans/07-idle-keepalive-und-session-endgruende.md` nachziehen.
+3. Danach erneut am Review-Gate des Folgeplans orientieren.

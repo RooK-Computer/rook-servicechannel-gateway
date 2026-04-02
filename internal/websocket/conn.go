@@ -116,6 +116,33 @@ func (c *GorillaConn) WriteMessage(ctx context.Context, message Message) error {
 	return c.conn.WriteMessage(toGorillaType(message.Type), message.Data)
 }
 
+func (c *GorillaConn) WritePing(ctx context.Context) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	writeCtx, cancel := context.WithTimeout(ctx, c.writeTimeout)
+	defer cancel()
+
+	deadline, ok := writeCtx.Deadline()
+	if ok {
+		return c.conn.WriteControl(gws.PingMessage, nil, deadline)
+	}
+	return c.conn.WriteControl(gws.PingMessage, nil, time.Now().Add(c.writeTimeout))
+}
+
+func (c *GorillaConn) ConfigureKeepalive(timeout time.Duration) error {
+	if timeout <= 0 {
+		return nil
+	}
+	if err := c.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(timeout))
+	})
+	return nil
+}
+
 func (c *GorillaConn) Close(code int, reason string) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()

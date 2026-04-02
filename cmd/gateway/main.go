@@ -34,10 +34,12 @@ func run() error {
 		"sshUsername", cfg.SSH.Username,
 		"sshPort", cfg.SSH.Port,
 		"sshInsecureIgnoreHostKey", cfg.SSH.InsecureIgnoreHostKey,
-		"sessionIdleTimeout", cfg.Session.IdleTimeout,
+		"sessionAuthorizeTimeout", cfg.Session.AuthorizeTimeout,
 		"sessionMaxConcurrent", cfg.Session.MaxConcurrent,
 		"sessionOutboundQueueDepth", cfg.Session.OutboundQueueDepth,
 		"websocketMaxMessageBytes", cfg.WebSocket.MaxMessageBytes,
+		"websocketKeepaliveInterval", cfg.WebSocket.KeepaliveInterval,
+		"websocketKeepaliveTimeout", cfg.WebSocket.KeepaliveTimeout,
 	)
 
 	validator := grants.NewClient(cfg.Backend.BaseURL, cfg.Backend.ValidationTimeout)

@@ -90,7 +90,8 @@ func NewHandler(cfg config.Config, logger *slog.Logger, grantValidator grants.Va
 
 func newSessionRegistry(cfg config.Config, logger *slog.Logger) *session.Registry {
 	return session.NewRegistry(logger, session.RegistryConfig{
-		IdleTimeout:        cfg.Session.IdleTimeout,
+		KeepaliveInterval:  cfg.WebSocket.KeepaliveInterval,
+		KeepaliveTimeout:   cfg.WebSocket.KeepaliveTimeout,
 		MaxConcurrent:      cfg.Session.MaxConcurrent,
 		OutboundQueueDepth: cfg.Session.OutboundQueueDepth,
 		AuditSink:          audit.NewLoggerSink(logger),
@@ -147,14 +148,14 @@ func classifyGrantError(err error) (int, errorResponse) {
 }
 
 func handleBrowserSocket(cfg config.Config, logger *slog.Logger, browserConn gatewayws.Connection, sessions *session.Registry, grantValidator grants.Validator, bridge sshbridge.Bridge) {
-	authorizeCtx, cancel := context.WithTimeout(context.Background(), cfg.Session.IdleTimeout)
+	authorizeCtx, cancel := context.WithTimeout(context.Background(), cfg.Session.AuthorizeTimeout)
 	defer cancel()
 
 	message, err := browserConn.ReadMessage(authorizeCtx)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			writeWebSocketFailure(browserConn, gws.ClosePolicyViolation, "authorize_timeout", "authorization message not received before timeout", string(session.EndReasonIdleTimeout))
+			writeWebSocketFailure(browserConn, gws.ClosePolicyViolation, "authorize_timeout", "authorization message not received before timeout", string(session.EndReasonAuthorizeTimeout))
 		case errors.Is(err, context.Canceled), gatewayws.IsPeerClosed(err):
 			_ = browserConn.Close(gws.CloseNormalClosure, string(session.EndReasonBrowserDisconnect))
 		default:

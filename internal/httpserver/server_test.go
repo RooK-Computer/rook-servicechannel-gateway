@@ -147,6 +147,31 @@ func TestTerminalAuthorizeReturnsBadGatewayForBackendFailure(t *testing.T) {
 	}
 }
 
+func TestTerminalAuthorizeTimesOutWithoutFirstMessage(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.Session.AuthorizeTimeout = 80 * time.Millisecond
+	server := httptest.NewServer(NewHandler(cfg, silentLogger(), stubValidator{}, nil, session.NewRegistry(silentLogger())))
+	defer server.Close()
+
+	conn, response, err := gws.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/gateway/terminal", nil)
+	if err != nil {
+		t.Fatalf("Dial() error = %v (status %v)", err, response)
+	}
+	defer conn.Close()
+
+	message := readJSONMessage(t, conn)
+	if message["type"] != "error" || message["code"] != "authorize_timeout" {
+		t.Fatalf("unexpected timeout payload %v", message)
+	}
+
+	closeMessage := readJSONMessage(t, conn)
+	if closeMessage["type"] != "close" || closeMessage["reason"] != string(session.EndReasonAuthorizeTimeout) {
+		t.Fatalf("unexpected close payload %v", closeMessage)
+	}
+}
+
 func TestTerminalHandshakeRejectsInputBeforeAuthorize(t *testing.T) {
 	t.Parallel()
 
@@ -293,12 +318,14 @@ func testConfig() config.Config {
 			InsecureIgnoreHostKey: true,
 		},
 		Session: config.SessionConfig{
-			IdleTimeout:        2 * time.Minute,
+			AuthorizeTimeout:   2 * time.Minute,
 			MaxConcurrent:      32,
 			OutboundQueueDepth: 16,
 		},
 		WebSocket: config.WebSocketConfig{
-			MaxMessageBytes: 64 * 1024,
+			MaxMessageBytes:   64 * 1024,
+			KeepaliveInterval: 30 * time.Second,
+			KeepaliveTimeout:  75 * time.Second,
 		},
 	}
 }

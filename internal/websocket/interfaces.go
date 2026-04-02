@@ -1,6 +1,9 @@
 package websocket
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type FrameType string
 
@@ -12,6 +15,8 @@ const (
 type Connection interface {
 	ReadMessage(context.Context) (Message, error)
 	WriteMessage(context.Context, Message) error
+	WritePing(context.Context) error
+	ConfigureKeepalive(time.Duration) error
 	Close(code int, reason string) error
 }
 

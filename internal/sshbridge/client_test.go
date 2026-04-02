@@ -15,9 +15,11 @@ func TestHostKeyCallbackRequiresInsecureFlagForCurrentMVP(t *testing.T) {
 		Backend: config.BackendConfig{BaseURL: "https://backend.example.test", ValidationTimeout: 5 * time.Second},
 		Secrets: config.SecretsConfig{SSHPrivateKeyPath: "secrets/gateway_ssh_ed25519", SSHPublicKeyPath: "secrets/gateway_ssh_ed25519.pub"},
 		SSH:     config.SSHConfig{Username: "pi", Port: 22, ConnectTimeout: 5 * time.Second, InsecureIgnoreHostKey: false},
-		Session: config.SessionConfig{IdleTimeout: 2 * time.Minute, MaxConcurrent: 32, OutboundQueueDepth: 16},
+		Session: config.SessionConfig{AuthorizeTimeout: 2 * time.Minute, MaxConcurrent: 32, OutboundQueueDepth: 16},
 		WebSocket: config.WebSocketConfig{
-			MaxMessageBytes: 64 * 1024,
+			MaxMessageBytes:   64 * 1024,
+			KeepaliveInterval: 30 * time.Second,
+			KeepaliveTimeout:  75 * time.Second,
 		},
 	})
 	if err != nil {

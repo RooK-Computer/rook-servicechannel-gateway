@@ -29,7 +29,8 @@ type StartRequest struct {
 type CleanupHook func(context.Context, Snapshot)
 
 type RegistryConfig struct {
-	IdleTimeout        time.Duration
+	KeepaliveInterval  time.Duration
+	KeepaliveTimeout   time.Duration
 	MaxConcurrent      int
 	OutboundQueueDepth int
 	AuditSink          audit.Sink
@@ -56,7 +57,8 @@ const (
 	EndReasonInternalError     EndReason = "internal_error"
 	EndReasonConsoleClosed     EndReason = "console_closed"
 	EndReasonSSHError          EndReason = "ssh_error"
-	EndReasonIdleTimeout       EndReason = "idle_timeout"
+	EndReasonAuthorizeTimeout  EndReason = "authorize_timeout"
+	EndReasonKeepaliveTimeout  EndReason = "keepalive_timeout"
 	EndReasonSessionLimit      EndReason = "session_limit_reached"
 )
 
